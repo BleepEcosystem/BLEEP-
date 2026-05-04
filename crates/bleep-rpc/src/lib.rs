@@ -518,7 +518,10 @@ pub fn rpc_routes_with_state(
         .and(warp::get())
         .and(with_rpc_state(rpc.clone()))
         .map(|st: RpcState| {
-            let h = st.chain_height.load(std::sync::atomic::Ordering::Relaxed);
+            let h = match &st.state_mgr {
+                Some(mgr_arc) => mgr_arc.lock().block_height(),
+                None => st.chain_height.load(std::sync::atomic::Ordering::Relaxed),
+            };
             warp::reply::json(&BlockResp {
                 height: h,
                 hash: format!("{:064x}", h),
