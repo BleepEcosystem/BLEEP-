@@ -109,6 +109,7 @@ use bleep_telemetry::{
 
 // ── RPC ───────────────────────────────────────────────────────────────────────
 use bleep_rpc::{rpc_routes_with_state, RpcState};
+use base64::{Engine as _, engine::general_purpose};
 use hex;
 use warp;
 
@@ -451,7 +452,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
         );
         std::process::exit(1);
     });
-    let jwt_secret = base64::decode(&jwt_secret_b64).unwrap_or_else(|e| {
+    let jwt_secret = general_purpose::STANDARD.decode(&jwt_secret_b64).unwrap_or_else(|e| {
         error!("BLEEP_JWT_SECRET is not valid base64: {}", e);
         std::process::exit(1);
     });
