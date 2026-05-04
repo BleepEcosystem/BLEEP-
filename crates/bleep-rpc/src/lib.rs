@@ -2663,28 +2663,28 @@ fn auth_rotate_secret(
 // Content-Type: application/x-ndjson
 fn auth_audit_export(
     state: Arc<RpcState>,
-) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
+) -> impl Filter<Extract = (Box<dyn warp::Reply + Send>,), Error = warp::Rejection> + Clone {
     warp::path!("rpc" / "auth" / "audit")
         .and(warp::get())
         .and(warp::query::<std::collections::HashMap<String, String>>())
         .and(with_arc_state(state))
         .and_then(|params: std::collections::HashMap<String, String>, st: Arc<RpcState>| async move {
             if !st.audit_export_enabled {
-                return Ok::<_, warp::Rejection>(warp::reply::with_status(
+                return Ok::<_, warp::Rejection>(Box::new(warp::reply::with_status(
                     warp::reply::json(&ErrResp { error: "Audit export disabled.".into() }),
                     warp::http::StatusCode::FORBIDDEN,
-                ));
+                )) as Box<dyn warp::Reply + Send>);
             }
 
             let auth_service = match &st.auth_service {
                 Some(svc) => Arc::clone(svc),
                 None => {
-                    return Ok(warp::reply::with_status(
+                    return Ok(Box::new(warp::reply::with_status(
                         warp::reply::json(&ErrResp {
                             error: "Auth service not mounted in RPC state.".into(),
                         }),
                         warp::http::StatusCode::INTERNAL_SERVER_ERROR,
-                    ));
+                    )) as Box<dyn warp::Reply + Send>);
                 }
             };
 
@@ -2734,11 +2734,14 @@ fn auth_audit_export(
                 audit.export_ndjson()
             };
 
-            Ok(warp::reply::with_header(
-                ndjson,
-                "Content-Type",
-                "application/x-ndjson",
-            ))
+            Ok(Box::new(warp::reply::with_status(
+                warp::reply::with_header(
+                    ndjson,
+                    "Content-Type",
+                    "application/x-ndjson",
+                ),
+                warp::http::StatusCode::OK,
+            )) as Box<dyn warp::Reply + Send>)
         })
 }
 
