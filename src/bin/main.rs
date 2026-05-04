@@ -80,6 +80,7 @@ use bleep_scheduler::{BlockTick, Scheduler};
 
 // ── Governance ────────────────────────────────────────────────────────────────
 use bleep_governance::governance_core::GovernanceEngine;
+use bleep_auth::AuthService;
 
 // ── P2P ───────────────────────────────────────────────────────────────────────
 use bleep_core::block_validation::BlockValidator;
@@ -443,6 +444,31 @@ async fn run() -> Result<(), Box<dyn Error>> {
     scheduler.register_built_in_tasks();
     let (interval_handle, block_sched_handle) = scheduler.start();
 
+    // Build live AuthService for the RPC auth subsystem.
+    let jwt_secret_b64 = std::env::var("BLEEP_JWT_SECRET").unwrap_or_else(|_| {
+        error!(
+            "BLEEP_JWT_SECRET is required for RPC auth. Set a base64-encoded secret >= 32 bytes."
+        );
+        std::process::exit(1);
+    });
+    let jwt_secret = base64::decode(&jwt_secret_b64).unwrap_or_else(|e| {
+        error!("BLEEP_JWT_SECRET is not valid base64: {}", e);
+        std::process::exit(1);
+    });
+    if jwt_secret.len() < 32 {
+        error!(
+            "BLEEP_JWT_SECRET must decode to at least 32 bytes; got {} bytes.",
+            jwt_secret.len()
+        );
+        std::process::exit(1);
+    }
+    let auth_service = Arc::new(
+        AuthService::new(jwt_secret).unwrap_or_else(|e| {
+            error!("Failed to initialize AuthService: {}", e);
+            std::process::exit(1);
+        }),
+    );
+
     // Build live RpcState — wires the live StateManager for /rpc/state and
     // /rpc/proof, and shares the same atomic counters with the relay task so
     // block/tx counts are up-to-date in /rpc/health and /rpc/telemetry.
@@ -453,7 +479,8 @@ async fn run() -> Result<(), Box<dyn Error>> {
         .with_economics_runtime(Arc::clone(&economics_runtime))
         .with_connect_orchestrator(Arc::clone(&connect_orchestrator))
         .with_pat_registry(Arc::clone(&pat_registry))
-        .with_transaction_pool(Arc::clone(&tx_pool));
+        .with_transaction_pool(Arc::clone(&tx_pool))
+        .with_auth_service(Arc::clone(&auth_service));
 
     // Relay FinalizedBlock events into Scheduler + metrics + economics
     let scheduler_relay = Arc::clone(&scheduler);
