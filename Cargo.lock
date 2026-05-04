@@ -1489,6 +1489,7 @@ dependencies = [
  "bincode",
  "blake2",
  "bleep-ai",
+ "bleep-auth",
  "bleep-consensus",
  "bleep-core",
  "bleep-crypto",
@@ -1548,7 +1549,9 @@ name = "bleep-rpc"
 version = "1.0.0"
 dependencies = [
  "anyhow",
+ "base64 0.21.7",
  "bleep-ai",
+ "bleep-auth",
  "bleep-consensus",
  "bleep-core",
  "bleep-crypto",

@@ -320,17 +320,27 @@ impl BlockValidityProver {
         let prover = BlockValidityProver::new();
 
         // Generate STARK proof using Winterfell
-        let _proof = prover
+        let proof = prover
             .prove(trace)
             .map_err(|e| format!("STARK proof generation failed: {:?}", e))?;
 
         let prove_time_ms = start.elapsed().as_millis() as u64;
         info!("✅ STARK proof generated in {} ms", prove_time_ms);
 
-        // For now, use fake serialization since Proof serialization is complex
-        // TODO: Implement proper Proof serialization
-        let proof_bytes = bincode::serialize("fake_proof_data")
-            .map_err(|e| format!("Proof serialization failed: {:?}", e))?;
+        let merkle_root_hash = crate::hash_to_31_bytes(merkle_root_bytes);
+        let validator_pk_hash = crate::hash_to_31_bytes(validator_pk_bytes);
+
+        // Serialize a custom block proof envelope with strong metadata and the raw Winterfell proof.
+        let mut proof_bytes = Vec::with_capacity(
+            8 + 8 + 8 + 8 + 31 + 31 + proof.to_bytes().len(),
+        );
+        proof_bytes.extend_from_slice(b"STARK_V1");
+        proof_bytes.extend_from_slice(&block_index.to_le_bytes());
+        proof_bytes.extend_from_slice(&epoch_id.to_le_bytes());
+        proof_bytes.extend_from_slice(&tx_count.to_le_bytes());
+        proof_bytes.extend_from_slice(&merkle_root_hash);
+        proof_bytes.extend_from_slice(&validator_pk_hash);
+        proof_bytes.extend_from_slice(&proof.to_bytes());
 
         Ok(StarkProof {
             proof_bytes,
@@ -435,31 +445,27 @@ impl BlockValidityVerifier {
         block_index: u64,
         epoch_id: u64,
         tx_count: u64,
-        _merkle_root_bytes: &[u8],
-        _validator_pk_bytes: &[u8],
+        merkle_root_bytes: &[u8],
+        validator_pk_bytes: &[u8],
     ) -> Result<bool, String> {
-        // For now, use a simple structural check since we don't have proper serialization
-        // TODO: Implement proper Proof serialization/deserialization
+        use winterfell::{verify, AcceptableOptions};
+
         if proof.proof_bytes.is_empty() {
             return Ok(false);
         }
 
-        // Check proof header
-        if proof.proof_bytes.len() < 8 {
+        // Check proof header and minimum size for 5 public inputs
+        let header_len = 8;
+        let metadata_len = 8 + 8 + 8 + 31 + 31;
+        if proof.proof_bytes.len() < header_len + metadata_len {
             return Ok(false);
         }
 
-        if &proof.proof_bytes[..8] != b"STARK_V1" {
+        if &proof.proof_bytes[..header_len] != b"STARK_V1" {
             return Ok(false);
         }
 
-        // Verify proof contains required block metadata
-        if proof.proof_bytes.len() < 8 + 24 {
-            return Ok(false);
-        }
-
-        // Extract and verify public inputs match
-        let mut offset = 8;
+        let mut offset = header_len;
         let proof_block_index = u64::from_le_bytes([
             proof.proof_bytes[offset],
             proof.proof_bytes[offset + 1],
@@ -494,18 +500,63 @@ impl BlockValidityVerifier {
             proof.proof_bytes[offset + 6],
             proof.proof_bytes[offset + 7],
         ]);
+        offset += 8;
 
-        // Verify public inputs match
+        let proof_merkle_root_hash: [u8; 31] = proof.proof_bytes[offset..offset + 31]
+            .try_into()
+            .map_err(|_| "Failed to parse merkle root hash".to_string())?;
+        offset += 31;
+
+        let proof_validator_pk_hash: [u8; 31] = proof.proof_bytes[offset..offset + 31]
+            .try_into()
+            .map_err(|_| "Failed to parse validator pk hash".to_string())?;
+
         if proof_block_index != block_index
             || proof_epoch_id != epoch_id
             || proof_tx_count != tx_count
+            || proof_merkle_root_hash != crate::hash_to_31_bytes(merkle_root_bytes)
+            || proof_validator_pk_hash != crate::hash_to_31_bytes(validator_pk_bytes)
         {
             info!("❌ STARK verification failed: public inputs mismatch");
             return Ok(false);
         }
 
-        info!("✅ STARK proof verified successfully");
-        Ok(true)
+        // Extract Winterfell proof bytes
+        let winterfell_proof_bytes = &proof.proof_bytes[offset..];
+        let winterfell_proof = winterfell::Proof::from_bytes(winterfell_proof_bytes)
+            .map_err(|e| format!("Failed to deserialize Winterfell proof: {:?}", e))?;
+
+        // Create AIR for verification with the public inputs
+        let _air = BlockValidityAir::for_verifying(
+            block_index,
+            epoch_id,
+            tx_count,
+            merkle_root_bytes,
+            validator_pk_bytes,
+        );
+
+        // Verify the proof using Winterfell
+        let acceptable_options = AcceptableOptions::MinConjecturedSecurity(95);
+        let result = verify::<BlockValidityAir,
+                              winterfell::crypto::hashers::Blake3_256<BaseElement>,
+                              winterfell::crypto::DefaultRandomCoin<winterfell::crypto::hashers::Blake3_256<BaseElement>>,
+                              winterfell::crypto::MerkleTree<winterfell::crypto::hashers::Blake3_256<BaseElement>>
+                             >(
+            winterfell_proof,
+            (),
+            &acceptable_options,
+        );
+
+        match result {
+            Ok(_) => {
+                info!("✅ STARK proof verified successfully");
+                Ok(true)
+            }
+            Err(e) => {
+                info!("❌ STARK verification failed: {:?}", e);
+                Ok(false)
+            }
+        }
     }
 }
 

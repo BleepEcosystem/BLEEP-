@@ -34,6 +34,7 @@ use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use warp::Filter;
 
+use bleep_auth::AuthService;
 use bleep_consensus::block_producer::BlockProducer;
 use bleep_consensus::slashing_engine::{SlashingEngine, SlashingEvidence};
 use bleep_consensus::validator_identity::{ValidatorIdentity, ValidatorRegistry};
@@ -67,6 +68,8 @@ pub struct RpcState {
     pub connect_orchestrator: Option<Arc<BleepConnectOrchestrator>>,
     /// Live `PATRegistry` for `/rpc/pat/*` (Sprint 7).
     pub pat_registry: Option<Arc<Mutex<PATRegistry>>>,
+    /// Live `AuthService` for `/rpc/auth/*` and session validation.
+    pub auth_service: Option<Arc<AuthService>>,
     // ── Sprint 8 ─────────────────────────────────────────────────────────────
     /// Faucet state: address → last drip unix timestamp (rate limiter).
     pub faucet_drips: Arc<Mutex<HashMap<String, u64>>>,
@@ -74,8 +77,6 @@ pub struct RpcState {
     pub faucet_ip_drips: Arc<Mutex<HashMap<String, u64>>>,
     /// Faucet balance in microBLEEP (8 decimals). 1000 BLEEP = 100_000_000_000.
     pub faucet_balance: Arc<std::sync::atomic::AtomicU64>,
-    /// JWT secret rotation counter (mirrors SessionManager.rotation_count).
-    pub jwt_rotation_count: Arc<std::sync::atomic::AtomicU64>,
     /// Audit log export enabled flag.
     pub audit_export_enabled: bool,
     /// Live BlockProducer — attach at node startup so GET /rpc/benchmark/latest
@@ -106,12 +107,12 @@ impl RpcState {
             economics_runtime: None,
             connect_orchestrator: None,
             pat_registry: None,
+            auth_service: None,
             faucet_drips: Arc::new(Mutex::new(HashMap::new())),
             faucet_ip_drips: Arc::new(Mutex::new(HashMap::new())),
             faucet_balance: Arc::new(std::sync::atomic::AtomicU64::new(
                 Self::FAUCET_INITIAL_BALANCE,
             )),
-            jwt_rotation_count: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             audit_export_enabled: true,
             block_producer: None,
             transaction_pool: None,
@@ -151,6 +152,12 @@ impl RpcState {
     /// Attach the live `PATRegistry` for Sprint 7 PAT endpoints.
     pub fn with_pat_registry(mut self, reg: Arc<Mutex<PATRegistry>>) -> Self {
         self.pat_registry = Some(reg);
+        self
+    }
+
+    /// Attach the live `AuthService` for `/rpc/auth/*` and session validation.
+    pub fn with_auth_service(mut self, auth_service: Arc<AuthService>) -> Self {
+        self.auth_service = Some(auth_service);
         self
     }
 
@@ -518,7 +525,10 @@ pub fn rpc_routes_with_state(
         .and(warp::get())
         .and(with_rpc_state(rpc.clone()))
         .map(|st: RpcState| {
-            let h = st.chain_height.load(std::sync::atomic::Ordering::Relaxed);
+            let h = match &st.state_mgr {
+                Some(mgr_arc) => mgr_arc.lock().block_height(),
+                None => st.chain_height.load(std::sync::atomic::Ordering::Relaxed),
+            };
             warp::reply::json(&BlockResp {
                 height: h,
                 hash: format!("{:064x}", h),
@@ -866,6 +876,10 @@ pub fn rpc_routes_with_state(
         // ── Sprint 8 ──────────────────────────────────────────────────────
         .or(faucet_drip(Arc::clone(&state_inner)))
         .or(faucet_status(Arc::clone(&state_inner)))
+        .or(auth_register_operator(Arc::clone(&state_inner)))
+        .or(auth_register_dapp(Arc::clone(&state_inner)))
+        .or(auth_login(Arc::clone(&state_inner)))
+        .or(auth_logout(Arc::clone(&state_inner)))
         .or(auth_rotate_secret(Arc::clone(&state_inner)))
         .or(auth_audit_export(Arc::clone(&state_inner)))
         .or(explorer_ui())
@@ -2235,9 +2249,42 @@ struct AuthRotateResp {
 }
 
 #[derive(Deserialize)]
+struct AuthRegisterOperatorReq {
+    operator_handle: String,
+    display_name: String,
+    password: String,
+    kyber_public_key_b64: String,
+}
+
+#[derive(Deserialize)]
+struct AuthRegisterDappReq {
+    developer_handle: String,
+    display_name: String,
+    password: String,
+}
+
+#[derive(Deserialize)]
+struct AuthLoginReq {
+    identity_id: String,
+    password: String,
+}
+
+#[derive(Deserialize)]
+struct AuthLogoutReq {
+    token: String,
+}
+
+#[derive(Deserialize)]
 struct AuthRotateReq {
     /// New JWT secret (base64-encoded, must decode to ≥32 bytes).
     new_secret_b64: String,
+}
+
+#[derive(Serialize)]
+struct AuthTokenResp {
+    token: String,
+    jti: String,
+    expires_at: String,
 }
 
 // ── POST /faucet/{address} ────────────────────────────────────────────────────
@@ -2365,6 +2412,187 @@ fn faucet_status(
 // Rotates the JWT signing secret. The new secret must be supplied as a
 // base64-encoded string decoding to ≥32 bytes of fresh CSPRNG material.
 // In production this endpoint must be protected by an admin RBAC role.
+fn auth_register_operator(
+    state: Arc<RpcState>,
+) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
+    warp::path!("rpc" / "auth" / "register" / "operator")
+        .and(warp::post())
+        .and(warp::body::json::<AuthRegisterOperatorReq>())
+        .and(with_arc_state(state))
+        .and_then(|req: AuthRegisterOperatorReq, st: Arc<RpcState>| async move {
+            let auth_service = match &st.auth_service {
+                Some(svc) => Arc::clone(svc),
+                None => {
+                    return Ok::<_, warp::Rejection>(warp::reply::with_status(
+                        warp::reply::json(&ErrResp {
+                            error: "Auth service not mounted in RPC state.".into(),
+                        }),
+                        warp::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    ));
+                }
+            };
+
+            let kyber_public_key = match base64::decode(&req.kyber_public_key_b64) {
+                Ok(bytes) => bytes,
+                Err(e) => {
+                    return Ok(warp::reply::with_status(
+                        warp::reply::json(&ErrResp {
+                            error: format!("Invalid kyber_public_key base64: {}", e),
+                        }),
+                        warp::http::StatusCode::BAD_REQUEST,
+                    ));
+                }
+            };
+
+            match auth_service
+                .register_operator(
+                    req.operator_handle,
+                    req.display_name,
+                    req.password,
+                    kyber_public_key,
+                )
+                .await
+            {
+                Ok((_identity, token)) => Ok(warp::reply::with_status(
+                    warp::reply::json(&AuthTokenResp {
+                        token: token.token,
+                        jti: token.jti,
+                        expires_at: token.expires_at.to_rfc3339(),
+                    }),
+                    warp::http::StatusCode::CREATED,
+                )),
+                Err(err) => Ok(warp::reply::with_status(
+                    warp::reply::json(&ErrResp {
+                        error: format!("Auth registration failed: {}", err),
+                    }),
+                    warp::http::StatusCode::BAD_REQUEST,
+                )),
+            }
+        })
+}
+
+fn auth_register_dapp(
+    state: Arc<RpcState>,
+) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
+    warp::path!("rpc" / "auth" / "register" / "dapp")
+        .and(warp::post())
+        .and(warp::body::json::<AuthRegisterDappReq>())
+        .and(with_arc_state(state))
+        .and_then(|req: AuthRegisterDappReq, st: Arc<RpcState>| async move {
+            let auth_service = match &st.auth_service {
+                Some(svc) => Arc::clone(svc),
+                None => {
+                    return Ok::<_, warp::Rejection>(warp::reply::with_status(
+                        warp::reply::json(&ErrResp {
+                            error: "Auth service not mounted in RPC state.".into(),
+                        }),
+                        warp::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    ));
+                }
+            };
+
+            match auth_service
+                .register_dapp(
+                    req.developer_handle,
+                    req.display_name,
+                    req.password,
+                )
+                .await
+            {
+                Ok((_identity, token)) => Ok(warp::reply::with_status(
+                    warp::reply::json(&AuthTokenResp {
+                        token: token.token,
+                        jti: token.jti,
+                        expires_at: token.expires_at.to_rfc3339(),
+                    }),
+                    warp::http::StatusCode::CREATED,
+                )),
+                Err(err) => Ok(warp::reply::with_status(
+                    warp::reply::json(&ErrResp {
+                        error: format!("Auth registration failed: {}", err),
+                    }),
+                    warp::http::StatusCode::BAD_REQUEST,
+                )),
+            }
+        })
+}
+
+fn auth_login(
+    state: Arc<RpcState>,
+) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
+    warp::path!("rpc" / "auth" / "login")
+        .and(warp::post())
+        .and(warp::body::json::<AuthLoginReq>())
+        .and(with_arc_state(state))
+        .and_then(|req: AuthLoginReq, st: Arc<RpcState>| async move {
+            let auth_service = match &st.auth_service {
+                Some(svc) => Arc::clone(svc),
+                None => {
+                    return Ok::<_, warp::Rejection>(warp::reply::with_status(
+                        warp::reply::json(&ErrResp {
+                            error: "Auth service not mounted in RPC state.".into(),
+                        }),
+                        warp::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    ));
+                }
+            };
+
+            match auth_service.login(&req.identity_id, &req.password).await {
+                Ok(token) => Ok(warp::reply::with_status(
+                    warp::reply::json(&AuthTokenResp {
+                        token: token.token,
+                        jti: token.jti,
+                        expires_at: token.expires_at.to_rfc3339(),
+                    }),
+                    warp::http::StatusCode::OK,
+                )),
+                Err(err) => Ok(warp::reply::with_status(
+                    warp::reply::json(&ErrResp {
+                        error: format!("Login failed: {}", err),
+                    }),
+                    warp::http::StatusCode::UNAUTHORIZED,
+                )),
+            }
+        })
+}
+
+fn auth_logout(
+    state: Arc<RpcState>,
+) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
+    warp::path!("rpc" / "auth" / "logout")
+        .and(warp::post())
+        .and(warp::body::json::<AuthLogoutReq>())
+        .and(with_arc_state(state))
+        .and_then(|req: AuthLogoutReq, st: Arc<RpcState>| async move {
+            let auth_service = match &st.auth_service {
+                Some(svc) => Arc::clone(svc),
+                None => {
+                    return Ok::<_, warp::Rejection>(warp::reply::with_status(
+                        warp::reply::json(&ErrResp {
+                            error: "Auth service not mounted in RPC state.".into(),
+                        }),
+                        warp::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    ));
+                }
+            };
+
+            match auth_service.logout(&req.token).await {
+                Ok(_) => Ok(warp::reply::with_status(
+                    warp::reply::json(&JsonReply {
+                        result: "logout succeeded".into(),
+                    }),
+                    warp::http::StatusCode::OK,
+                )),
+                Err(err) => Ok(warp::reply::with_status(
+                    warp::reply::json(&ErrResp {
+                        error: format!("Logout failed: {}", err),
+                    }),
+                    warp::http::StatusCode::BAD_REQUEST,
+                )),
+            }
+        })
+}
+
 fn auth_rotate_secret(
     state: Arc<RpcState>,
 ) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
@@ -2372,40 +2600,58 @@ fn auth_rotate_secret(
         .and(warp::post())
         .and(warp::body::json::<AuthRotateReq>())
         .and(with_arc_state(state))
-        .map(|req: AuthRotateReq, st: Arc<RpcState>| {
-            // Validate that the base64 secret decodes to ≥32 bytes
-            match base64::decode(&req.new_secret_b64) {
-                Ok(bytes) if bytes.len() >= 32 => {
-                    let count = st
-                        .jwt_rotation_count
-                        .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
-                        + 1;
-                    log::info!("JWT secret rotation #{} accepted via RPC", count);
-                    Box::new(warp::reply::with_status(
-                        warp::reply::json(&AuthRotateResp {
-                            ok: true,
-                            rotation_count: count,
-                            message: format!(
-                                "Secret rotated successfully (rotation #{}). \
-                                 All existing sessions will be invalidated on next validation.",
-                                count
-                            ),
+        .and_then(|req: AuthRotateReq, st: Arc<RpcState>| async move {
+            let auth_service = match &st.auth_service {
+                Some(svc) => Arc::clone(svc),
+                None => {
+                    return Ok::<_, warp::Rejection>(warp::reply::with_status(
+                        warp::reply::json(&ErrResp {
+                            error: "Auth service not mounted in RPC state.".into(),
                         }),
-                        warp::http::StatusCode::OK,
-                    )) as Box<dyn warp::Reply + Send>
+                        warp::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    ));
                 }
-                Ok(_) => Box::new(warp::reply::with_status(
+            };
+
+            let bytes = match base64::decode(&req.new_secret_b64) {
+                Ok(bytes) => bytes,
+                Err(e) => {
+                    return Ok(warp::reply::with_status(
+                        warp::reply::json(&ErrResp {
+                            error: format!("Invalid base64: {}", e),
+                        }),
+                        warp::http::StatusCode::BAD_REQUEST,
+                    ));
+                }
+            };
+
+            if bytes.len() < 32 {
+                return Ok(warp::reply::with_status(
                     warp::reply::json(&ErrResp {
                         error: "Decoded secret is shorter than 32 bytes.".into(),
                     }),
                     warp::http::StatusCode::BAD_REQUEST,
-                )) as Box<dyn warp::Reply + Send>,
-                Err(e) => Box::new(warp::reply::with_status(
+                ));
+            }
+
+            match auth_service.sessions.rotate_secret(bytes).await {
+                Ok(count) => Ok(warp::reply::with_status(
+                    warp::reply::json(&AuthRotateResp {
+                        ok: true,
+                        rotation_count: count,
+                        message: format!(
+                            "Secret rotated successfully (rotation #{}). All existing sessions will be invalidated on next validation.",
+                            count
+                        ),
+                    }),
+                    warp::http::StatusCode::OK,
+                )),
+                Err(err) => Ok(warp::reply::with_status(
                     warp::reply::json(&ErrResp {
-                        error: format!("Invalid base64: {}", e),
+                        error: format!("Rotation failed: {}", err),
                     }),
                     warp::http::StatusCode::BAD_REQUEST,
-                )) as Box<dyn warp::Reply + Send>,
+                )),
             }
         })
 }
@@ -2417,87 +2663,85 @@ fn auth_rotate_secret(
 // Content-Type: application/x-ndjson
 fn auth_audit_export(
     state: Arc<RpcState>,
-) -> impl Filter<Extract = (impl warp::Reply,), Error = warp::Rejection> + Clone {
+) -> impl Filter<Extract = (Box<dyn warp::Reply + Send>,), Error = warp::Rejection> + Clone {
     warp::path!("rpc" / "auth" / "audit")
         .and(warp::get())
         .and(warp::query::<std::collections::HashMap<String, String>>())
         .and(with_arc_state(state))
-        .map(|params: std::collections::HashMap<String, String>, st: Arc<RpcState>| {
+        .and_then(|params: std::collections::HashMap<String, String>, st: Arc<RpcState>| async move {
             if !st.audit_export_enabled {
-                return Box::new(warp::reply::with_status(
+                return Ok::<_, warp::Rejection>(Box::new(warp::reply::with_status(
                     warp::reply::json(&ErrResp { error: "Audit export disabled.".into() }),
                     warp::http::StatusCode::FORBIDDEN,
-                )) as Box<dyn warp::Reply + Send>;
+                )) as Box<dyn warp::Reply + Send>);
             }
 
-            let limit: Option<usize> = params.get("limit")
-                .and_then(|v| v.parse().ok());
+            let auth_service = match &st.auth_service {
+                Some(svc) => Arc::clone(svc),
+                None => {
+                    return Ok(Box::new(warp::reply::with_status(
+                        warp::reply::json(&ErrResp {
+                            error: "Auth service not mounted in RPC state.".into(),
+                        }),
+                        warp::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    )) as Box<dyn warp::Reply + Send>);
+                }
+            };
 
-            // Build synthetic NDJSON from node state
-            let now_ts = chrono::Utc::now().to_rfc3339();
-            let rotation_count = st.jwt_rotation_count.load(std::sync::atomic::Ordering::Relaxed);
-            let total_drips    = st.faucet_drips.lock().len();
-            let blocks         = st.blocks_produced.load(std::sync::atomic::Ordering::Relaxed);
+            let limit: Option<usize> = params.get("limit").and_then(|v| v.parse().ok());
+            let audit = auth_service.audit.read().await;
 
-            let mut events: Vec<serde_json::Value> = vec![
-                serde_json::json!({
-                    "seq": 0,
-                    "kind": "NodeStartup",
-                    "actor_id": "system",
-                    "resource": "node",
-                    "action": "start",
-                    "outcome": "success",
-                    "details": format!("Node started, {} blocks produced", blocks),
-                    "timestamp": now_ts,
-                }),
-                serde_json::json!({
-                    "seq": 1,
-                    "kind": "JwtRotation",
-                    "actor_id": "admin",
-                    "resource": "auth",
-                    "action": "rotate_secret",
-                    "outcome": if rotation_count > 0 { "success" } else { "not_rotated" },
-                    "details": format!("JWT secret rotated {} time(s)", rotation_count),
-                    "timestamp": now_ts,
-                }),
-                serde_json::json!({
-                    "seq": 2,
-                    "kind": "FaucetActivity",
-                    "actor_id": "faucet",
-                    "resource": "faucet",
-                    "action": "drip",
-                    "outcome": "summary",
-                    "details": format!("{} total drips dispensed", total_drips),
-                    "timestamp": now_ts,
-                }),
-            ];
+            let ndjson = if let Some(limit) = limit {
+                let entries: Vec<&bleep_auth::AuditEntry> = audit
+                    .entries()
+                    .iter()
+                    .rev()
+                    .take(limit)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect();
 
-            let meta = serde_json::json!({
-                "type":       "audit_export_meta",
-                "total":      events.len(),
-                "chain_tip":  format!("{:064x}", st.chain_height.load(std::sync::atomic::Ordering::Relaxed)),
-                "exported_at": now_ts,
-            });
+                let mut out = String::new();
+                for (seq, entry) in entries.iter().enumerate() {
+                    let line = serde_json::json!({
+                        "seq": seq,
+                        "entry_hash": entry.entry_hash,
+                        "prev_hash": entry.prev_hash,
+                        "event": {
+                            "kind": format!("{:?}", entry.event.kind),
+                            "actor_id": entry.event.actor_id,
+                            "resource": entry.event.resource,
+                            "action": entry.event.action,
+                            "outcome": entry.event.outcome,
+                            "details": entry.event.details,
+                            "timestamp": entry.event.timestamp.to_rfc3339(),
+                        },
+                    });
+                    out.push_str(&line.to_string());
+                    out.push('\n');
+                }
+                let meta = serde_json::json!({
+                    "type": "audit_export_meta",
+                    "total": audit.len(),
+                    "chain_tip": audit.head_hash(),
+                    "exported_at": chrono::Utc::now().to_rfc3339(),
+                });
+                out.push_str(&meta.to_string());
+                out.push('\n');
+                out
+            } else {
+                audit.export_ndjson()
+            };
 
-            if let Some(n) = limit {
-                events = events.into_iter().rev().take(n).collect();
-            }
-
-            let mut ndjson = events.iter()
-                .map(|e| e.to_string())
-                .collect::<Vec<_>>()
-                .join("\n");
-            ndjson.push('\n');
-            ndjson.push_str(&meta.to_string());
-            ndjson.push('\n');
-
-            Box::new(
-                warp::http::Response::builder()
-                    .status(200)
-                    .header("content-type", "application/x-ndjson")
-                    .body(ndjson)
-                    .unwrap()
-            ) as Box<dyn warp::Reply + Send>
+            Ok(Box::new(warp::reply::with_status(
+                warp::reply::with_header(
+                    ndjson,
+                    "Content-Type",
+                    "application/x-ndjson",
+                ),
+                warp::http::StatusCode::OK,
+            )) as Box<dyn warp::Reply + Send>)
         })
 }
 
@@ -2600,8 +2844,10 @@ fn metrics_prometheus(
             let drips = st.faucet_drips.lock().len();
             let faucet_bal = st.faucet_balance.load(std::sync::atomic::Ordering::Relaxed);
             let jwt_rot = st
-                .jwt_rotation_count
-                .load(std::sync::atomic::Ordering::Relaxed);
+                .auth_service
+                .as_ref()
+                .map(|svc| svc.sessions.rotation_count())
+                .unwrap_or(0);
 
             let body = format!(
                 r#"# HELP bleep_chain_height Current canonical chain height (block number).
@@ -2905,20 +3151,12 @@ mod tests_sprint8 {
     }
 
     #[test]
-    fn jwt_rotation_counter_increments() {
-        let st = Arc::new(RpcState::new());
-        assert_eq!(
-            st.jwt_rotation_count
-                .load(std::sync::atomic::Ordering::Relaxed),
-            0
+    fn auth_service_can_be_attached_to_rpc_state() {
+        let auth = Arc::new(
+            AuthService::new(b"abcdefghijklmnopqrstuvwxyz012345".to_vec()).unwrap(),
         );
-        st.jwt_rotation_count
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        assert_eq!(
-            st.jwt_rotation_count
-                .load(std::sync::atomic::Ordering::Relaxed),
-            1
-        );
+        let st = Arc::new(RpcState::new().with_auth_service(Arc::clone(&auth)));
+        assert!(st.auth_service.is_some());
     }
 
     #[test]

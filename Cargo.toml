@@ -77,6 +77,7 @@ bleep-vm          = { path = "crates/bleep-vm" }
 bleep-wallet-core = { path = "crates/bleep-wallet-core" }
 bleep-ai          = { path = "crates/bleep-ai" }
 bleep-economics   = { path = "crates/bleep-economics" }
+bleep-auth        = { path = "crates/bleep-auth" }
 
 tokio             = { version = "1.36", features = ["full"] }
 tokio-stream      = "0.1.15"

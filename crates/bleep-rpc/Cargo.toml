@@ -33,6 +33,8 @@ bleep-economics   = { path = "../bleep-economics" }
 bleep-interop     = { path = "../bleep-interop" }
 bleep-telemetry   = { path = "../bleep-telemetry" }
 bleep-governance  = { path = "../bleep-governance" }
+bleep-auth        = { path = "../bleep-auth" }
+base64           = "0.21"
 
 [[bin]]
 name = "bleep-rpc"
