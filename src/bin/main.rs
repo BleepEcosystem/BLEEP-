@@ -111,6 +111,8 @@ use bleep_telemetry::{
 use bleep_rpc::{rpc_routes_with_state, RpcState};
 use base64::{Engine as _, engine::general_purpose};
 use hex;
+use rand::rngs::OsRng;
+use rand::RngCore;
 use warp;
 
 #[tokio::main]
@@ -446,23 +448,37 @@ async fn run() -> Result<(), Box<dyn Error>> {
     let (interval_handle, block_sched_handle) = scheduler.start();
 
     // Build live AuthService for the RPC auth subsystem.
-    let jwt_secret_b64 = std::env::var("BLEEP_JWT_SECRET").unwrap_or_else(|_| {
-        error!(
-            "BLEEP_JWT_SECRET is required for RPC auth. Set a base64-encoded secret >= 32 bytes."
-        );
-        std::process::exit(1);
-    });
-    let jwt_secret = general_purpose::STANDARD.decode(&jwt_secret_b64).unwrap_or_else(|e| {
-        error!("BLEEP_JWT_SECRET is not valid base64: {}", e);
-        std::process::exit(1);
-    });
-    if jwt_secret.len() < 32 {
-        error!(
-            "BLEEP_JWT_SECRET must decode to at least 32 bytes; got {} bytes.",
-            jwt_secret.len()
-        );
-        std::process::exit(1);
-    }
+    let jwt_secret = match std::env::var("BLEEP_JWT_SECRET") {
+        Ok(jwt_secret_b64) => match general_purpose::STANDARD.decode(&jwt_secret_b64) {
+            Ok(secret) if secret.len() >= 32 => secret,
+            Ok(secret) => {
+                warn!(
+                    "BLEEP_JWT_SECRET decoded to {} bytes, which is too short; generating a temporary secret.",
+                    secret.len()
+                );
+                let mut secret = vec![0u8; 32];
+                OsRng.fill_bytes(&mut secret);
+                secret
+            }
+            Err(e) => {
+                warn!(
+                    "BLEEP_JWT_SECRET is not valid base64: {}; generating a temporary secret.",
+                    e
+                );
+                let mut secret = vec![0u8; 32];
+                OsRng.fill_bytes(&mut secret);
+                secret
+            }
+        },
+        Err(_) => {
+            warn!(
+                "BLEEP_JWT_SECRET not set. Generating a temporary secret for this runtime."
+            );
+            let mut secret = vec![0u8; 32];
+            OsRng.fill_bytes(&mut secret);
+            secret
+        }
+    };
     let auth_service = Arc::new(
         AuthService::new(jwt_secret).unwrap_or_else(|e| {
             error!("Failed to initialize AuthService: {}", e);
