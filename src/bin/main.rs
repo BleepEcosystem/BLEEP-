@@ -113,7 +113,7 @@ use base64::{Engine as _, engine::general_purpose};
 use hex;
 use warp;
 
-const DEFAULT_BLEEP_JWT_SECRET_B64: &str = "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXo="; // Local dev fallback; set BLEEP_JWT_SECRET in production.
+const DEFAULT_BLEEP_JWT_SECRET_B64: &str = "UtQcXNbNejElXUMcGocAuRh+YLiIgR9onZ1+PUJtJiU="; // Local dev fallback; set BLEEP_JWT_SECRET in production.
 
 #[tokio::main]
 async fn main() {

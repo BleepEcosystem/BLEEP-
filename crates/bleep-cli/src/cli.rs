@@ -50,7 +50,7 @@ use base64::Engine;
 
 /// Default RPC endpoint (override via BLEEP_RPC env var).
 const DEFAULT_RPC: &str = "http://127.0.0.1:8545";
-const DEFAULT_BLEEP_JWT_SECRET_B64: &str = "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXo="; // Local dev fallback; set BLEEP_JWT_SECRET in production.
+const DEFAULT_BLEEP_JWT_SECRET_B64: &str = "UtQcXNbNejElXUMcGocAuRh+YLiIgR9onZ1+PUJtJiU="; // Local dev fallback; set BLEEP_JWT_SECRET in production.
 
 #[tokio::main]
 async fn main() -> Result<()> {
