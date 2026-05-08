@@ -50,6 +50,7 @@ use base64::Engine;
 
 /// Default RPC endpoint (override via BLEEP_RPC env var).
 const DEFAULT_RPC: &str = "http://127.0.0.1:8545";
+const DEFAULT_BLEEP_JWT_SECRET_B64: &str = "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXo="; // Local dev fallback; set BLEEP_JWT_SECRET in production.
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -1089,12 +1090,34 @@ async fn get_block_by_id(rpc: &str, id: &str) -> Result<String> {
 
 /// Generate JWT token for RPC authentication
 fn get_jwt_token_sync() -> Result<String> {
-    let jwt_secret_b64 = std::env::var("BLEEP_JWT_SECRET")
-        .map_err(|_| anyhow!("BLEEP_JWT_SECRET env var not set. Set a base64-encoded secret >= 32 bytes"))?;
+    let jwt_secret_b64 = std::env::var("BLEEP_JWT_SECRET").unwrap_or_else(|_| {
+        println!(
+            "⚠️  BLEEP_JWT_SECRET env var not set. Using default dev auth secret."
+        );
+        DEFAULT_BLEEP_JWT_SECRET_B64.to_string()
+    });
     
     let base64_engine = base64::engine::general_purpose::STANDARD;
-    let jwt_secret = base64_engine.decode(&jwt_secret_b64)
-        .map_err(|e| anyhow!("Failed to decode BLEEP_JWT_SECRET: {}", e))?;
+    let jwt_secret = match base64_engine.decode(&jwt_secret_b64) {
+        Ok(secret) if secret.len() >= 32 => secret,
+        Ok(_) => {
+            println!(
+                "⚠️  BLEEP_JWT_SECRET decoded to fewer than 32 bytes; using default dev auth secret."
+            );
+            base64_engine
+                .decode(DEFAULT_BLEEP_JWT_SECRET_B64)
+                .expect("default JWT secret is valid base64")
+        }
+        Err(e) => {
+            println!(
+                "⚠️  Failed to decode BLEEP_JWT_SECRET: {}; using default dev auth secret.",
+                e
+            );
+            base64_engine
+                .decode(DEFAULT_BLEEP_JWT_SECRET_B64)
+                .expect("default JWT secret is valid base64")
+        }
+    };
     
     let session_mgr = SessionManager::new(jwt_secret)
         .map_err(|e| anyhow!("Failed to create SessionManager: {}", e))?;

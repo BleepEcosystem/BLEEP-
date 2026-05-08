@@ -111,9 +111,9 @@ use bleep_telemetry::{
 use bleep_rpc::{rpc_routes_with_state, RpcState};
 use base64::{Engine as _, engine::general_purpose};
 use hex;
-use rand::rngs::OsRng;
-use rand::RngCore;
 use warp;
+
+const DEFAULT_BLEEP_JWT_SECRET_B64: &str = "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXo="; // Local dev fallback; set BLEEP_JWT_SECRET in production.
 
 #[tokio::main]
 async fn main() {
@@ -451,32 +451,31 @@ async fn run() -> Result<(), Box<dyn Error>> {
     let jwt_secret = match std::env::var("BLEEP_JWT_SECRET") {
         Ok(jwt_secret_b64) => match general_purpose::STANDARD.decode(&jwt_secret_b64) {
             Ok(secret) if secret.len() >= 32 => secret,
-            Ok(secret) => {
+            Ok(_) => {
                 warn!(
-                    "BLEEP_JWT_SECRET decoded to {} bytes, which is too short; generating a temporary secret.",
-                    secret.len()
+                    "BLEEP_JWT_SECRET decoded to fewer than 32 bytes; falling back to default dev secret."
                 );
-                let mut secret = vec![0u8; 32];
-                OsRng.fill_bytes(&mut secret);
-                secret
+                general_purpose::STANDARD
+                    .decode(DEFAULT_BLEEP_JWT_SECRET_B64)
+                    .expect("default JWT secret is valid base64")
             }
             Err(e) => {
                 warn!(
-                    "BLEEP_JWT_SECRET is not valid base64: {}; generating a temporary secret.",
+                    "BLEEP_JWT_SECRET is not valid base64: {}; falling back to default dev secret.",
                     e
                 );
-                let mut secret = vec![0u8; 32];
-                OsRng.fill_bytes(&mut secret);
-                secret
+                general_purpose::STANDARD
+                    .decode(DEFAULT_BLEEP_JWT_SECRET_B64)
+                    .expect("default JWT secret is valid base64")
             }
         },
         Err(_) => {
             warn!(
-                "BLEEP_JWT_SECRET not set. Generating a temporary secret for this runtime."
+                "BLEEP_JWT_SECRET not set. Using default dev secret for this runtime."
             );
-            let mut secret = vec![0u8; 32];
-            OsRng.fill_bytes(&mut secret);
-            secret
+            general_purpose::STANDARD
+                .decode(DEFAULT_BLEEP_JWT_SECRET_B64)
+                .expect("default JWT secret is valid base64")
         }
     };
     let auth_service = Arc::new(
