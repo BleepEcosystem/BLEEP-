@@ -1008,7 +1008,9 @@ name = "bleep-cli"
 version = "1.0.0"
 dependencies = [
  "anyhow",
+ "base64 0.21.7",
  "bleep-ai",
+ "bleep-auth",
  "bleep-consensus",
  "bleep-core",
  "bleep-crypto",
@@ -1019,6 +1021,7 @@ dependencies = [
  "bleep-telemetry",
  "bleep-wallet-core",
  "bleep-zkp",
+ "chrono",
  "clap",
  "hex",
  "reqwest 0.11.27",

@@ -44,6 +44,9 @@ use bleep_governance::governance_core::{GovernanceEngine, Proposal, ProposalType
 use bleep_state::state_manager::StateManager;
 use bleep_wallet_core::wallet::WalletManager;
 use bleep_zkp::Verifier as ZkVerifier;
+use bleep_auth::session::SessionManager;
+use bleep_auth::Role;
+use base64::Engine;
 
 /// Default RPC endpoint (override via BLEEP_RPC env var).
 const DEFAULT_RPC: &str = "http://127.0.0.1:8545";
@@ -1084,11 +1087,43 @@ async fn get_block_by_id(rpc: &str, id: &str) -> Result<String> {
     Ok(resp)
 }
 
+/// Generate JWT token for RPC authentication
+fn get_jwt_token() -> Result<String> {
+    let jwt_secret_b64 = std::env::var("BLEEP_JWT_SECRET")
+        .map_err(|_| anyhow!("BLEEP_JWT_SECRET env var not set. Set a base64-encoded secret >= 32 bytes"))?;
+    
+    let base64_engine = base64::engine::general_purpose::STANDARD;
+    use base64::Engine;
+    let jwt_secret = base64_engine.decode(&jwt_secret_b64)
+        .map_err(|e| anyhow!("Failed to decode BLEEP_JWT_SECRET: {}", e))?;
+    
+    let session_mgr = SessionManager::new(jwt_secret)
+        .map_err(|e| anyhow!("Failed to create SessionManager: {}", e))?;
+    
+    // Issue a session token valid for 1 hour
+    let token = session_mgr.issue("bleep-cli", &[Role::DappDeveloper], chrono::Duration::hours(1))
+        .map_err(|e| anyhow!("Failed to issue session token: {}", e))?;
+    
+    Ok(token.token)
+}
+
 /// POST /rpc/tx  with the ZKTransaction as JSON
 async fn post_transaction(rpc: &str, tx: &ZKTransaction) -> Result<String> {
     let url = format!("{}/rpc/tx", rpc);
     let client = reqwest::Client::new();
-    let resp = client.post(&url).json(tx).send().await?.text().await?;
+    
+    // Get JWT token for authentication
+    let jwt_token = get_jwt_token()?;
+    
+    let resp = client
+        .post(&url)
+        .header("authorization", format!("Bearer {}", jwt_token))
+        .json(tx)
+        .send()
+        .await?
+        .text()
+        .await?;
+    
     Ok(resp)
 }
 
