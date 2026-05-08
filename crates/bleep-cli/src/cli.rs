@@ -1126,6 +1126,8 @@ fn get_jwt_token_sync() -> Result<String> {
     let token = session_mgr.issue("bleep-cli", &[Role::DappDeveloper], chrono::Duration::hours(1))
         .map_err(|e| anyhow!("Failed to issue session token: {}", e))?;
     
+    eprintln!("[DEBUG] JWT Token: {}", token.token);
+    
     Ok(token.token)
 }
 
