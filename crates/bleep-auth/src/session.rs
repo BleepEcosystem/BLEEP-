@@ -140,9 +140,9 @@ impl SessionManager {
 
     /// Issue a new session token for `identity_id` with the given roles and TTL.
     ///
-    /// This is a synchronous method that uses `blocking_read` to acquire the
-    /// current encoding key (rotation is async; issuance is hot-path sync).
-    pub fn issue(
+    /// This is an async method that acquires the current encoding key from the
+    /// async RwLock. Rotation is async; issuance is hot-path async.
+    pub async fn issue(
         &self,
         identity_id: &str,
         roles: &[Role],
@@ -170,7 +170,7 @@ impl SessionManager {
             nonce,
         };
 
-        let enc_key = self.active_key.blocking_read();
+        let enc_key = self.active_key.read().await;
         let token = encode(&Header::new(Algorithm::HS256), &claims, &enc_key.0)
             .map_err(|e| AuthError::CryptoError(format!("JWT encode: {e}")))?;
 
@@ -188,11 +188,11 @@ impl SessionManager {
     /// Checks: signature integrity, expiry, and revocation list.
     /// After a secret rotation, tokens signed with the previous key will fail
     /// (by design — rotate only when all existing tokens have short remaining TTL).
-    pub fn validate(&self, token: &str) -> AuthResult<SessionClaims> {
+    pub async fn validate(&self, token: &str) -> AuthResult<SessionClaims> {
         let mut v = Validation::new(Algorithm::HS256);
         v.validate_exp = true;
 
-        let dec_key = self.active_key.blocking_read();
+        let dec_key = self.active_key.read().await;
         let data = decode::<SessionClaims>(token, &dec_key.1, &v).map_err(|e| {
             use jsonwebtoken::errors::ErrorKind;
             match e.kind() {
@@ -251,37 +251,39 @@ mod tests {
         SessionManager::new(b"a-32-byte-test-secret-for-bleep!".to_vec()).unwrap()
     }
 
-    #[test]
-    fn issue_and_validate() {
+    #[tokio::test]
+    async fn issue_and_validate() {
         let m = mgr();
         let tok = m
             .issue("op1", &[Role::NodeOperator], chrono::Duration::hours(1))
+            .await
             .unwrap();
-        let c = m.validate(&tok.token).unwrap();
+        let c = m.validate(&tok.token).await.unwrap();
         assert_eq!(c.sub, "op1");
         assert!(c.roles.contains(&Role::NodeOperator));
     }
 
-    #[test]
-    fn revocation_works() {
+    #[tokio::test]
+    async fn revocation_works() {
         let m = mgr();
         let tok = m
             .issue("op2", &[Role::ReadOnly], chrono::Duration::hours(1))
+            .await
             .unwrap();
         m.revoke(&tok.jti).unwrap();
-        assert_eq!(m.validate(&tok.token), Err(AuthError::RevokedSession));
+        assert_eq!(m.validate(&tok.token).await, Err(AuthError::RevokedSession));
     }
 
-    #[test]
-    fn garbage_token_rejected() {
-        assert_eq!(mgr().validate("not.a.jwt"), Err(AuthError::InvalidSession));
+    #[tokio::test]
+    async fn garbage_token_rejected() {
+        assert_eq!(mgr().validate("not.a.jwt").await, Err(AuthError::InvalidSession));
     }
 
-    #[test]
-    fn wrong_secret_rejected() {
+    #[tokio::test]
+    async fn wrong_secret_rejected() {
         let m1 = mgr();
         let m2 = SessionManager::new(b"completely-different-secret-here".to_vec()).unwrap();
-        let tok = m1.issue("u", &[], chrono::Duration::hours(1)).unwrap();
-        assert_eq!(m2.validate(&tok.token), Err(AuthError::InvalidSession));
+        let tok = m1.issue("u", &[], chrono::Duration::hours(1)).await.unwrap();
+        assert_eq!(m2.validate(&tok.token).await, Err(AuthError::InvalidSession));
     }
 }

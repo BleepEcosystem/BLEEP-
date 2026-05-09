@@ -1089,7 +1089,7 @@ async fn get_block_by_id(rpc: &str, id: &str) -> Result<String> {
 }
 
 /// Generate JWT token for RPC authentication
-fn get_jwt_token_sync() -> Result<String> {
+async fn get_jwt_token_sync() -> Result<String> {
     let jwt_secret_b64 = std::env::var("BLEEP_JWT_SECRET").unwrap_or_else(|_| {
         println!(
             "⚠️  BLEEP_JWT_SECRET env var not set. Using default dev auth secret."
@@ -1124,6 +1124,7 @@ fn get_jwt_token_sync() -> Result<String> {
     
     // Issue a session token valid for 1 hour
     let token = session_mgr.issue("bleep-cli", &[Role::DappDeveloper], chrono::Duration::hours(1))
+        .await
         .map_err(|e| anyhow!("Failed to issue session token: {}", e))?;
     
     eprintln!("[DEBUG] JWT Token: {}", token.token);
@@ -1131,11 +1132,10 @@ fn get_jwt_token_sync() -> Result<String> {
     Ok(token.token)
 }
 
-/// Get JWT token from async context using blocking task
+/// Get JWT token from async context
 async fn get_jwt_token() -> Result<String> {
-    tokio::task::spawn_blocking(|| get_jwt_token_sync())
+    get_jwt_token_sync()
         .await
-        .map_err(|e| anyhow!("Failed to spawn JWT token task: {}", e))?
 }
 
 /// POST /rpc/tx  with the ZKTransaction as JSON

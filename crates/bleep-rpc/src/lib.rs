@@ -1075,7 +1075,7 @@ fn auth_filter(
             let auth_service = st.auth_service.as_ref().ok_or_else(|| {
                 warp::reject::custom(AuthRejection(AuthError::Unauthorized("Auth service not available".to_string())))
             })?;
-            let claims = auth_service.sessions.validate(token).map_err(|e| {
+            let claims = auth_service.sessions.validate(token).await.map_err(|e| {
                 warp::reject::custom(AuthRejection(e))
             })?;
             Ok(claims)

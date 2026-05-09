@@ -95,7 +95,7 @@ impl AuthService {
             &identity.id,
             &[Role::NodeOperator],
             chrono::Duration::hours(8),
-        )?;
+        ).await?;
 
         self.audit.write().await.record(AuditEvent {
             kind: AuditEventKind::Registration,
@@ -135,7 +135,7 @@ impl AuthService {
             &identity.id,
             &[Role::DappDeveloper],
             chrono::Duration::hours(8),
-        )?;
+        ).await?;
 
         self.audit.write().await.record(AuditEvent {
             kind: AuditEventKind::Registration,
@@ -163,7 +163,7 @@ impl AuthService {
         let roles = self.rbac.get_roles(identity_id);
         let token = self
             .sessions
-            .issue(identity_id, &roles, chrono::Duration::hours(8))?;
+            .issue(identity_id, &roles, chrono::Duration::hours(8)).await?;
 
         self.audit.write().await.record(AuditEvent {
             kind: AuditEventKind::Login,
@@ -179,7 +179,7 @@ impl AuthService {
     }
 
     pub async fn logout(&self, token: &str) -> AuthResult<()> {
-        let claims = self.sessions.validate(token)?;
+        let claims = self.sessions.validate(token).await?;
         self.sessions.revoke(&claims.jti)?;
 
         self.audit.write().await.record(AuditEvent {
@@ -197,7 +197,7 @@ impl AuthService {
     // ─── Token validation (hot path — no I/O) ─────────────────────────────
 
     pub async fn validate_token(&self, token: &str) -> AuthResult<SessionClaims> {
-        self.sessions.validate(token)
+        self.sessions.validate(token).await
     }
 
     // ─── Authorization ─────────────────────────────────────────────────────
