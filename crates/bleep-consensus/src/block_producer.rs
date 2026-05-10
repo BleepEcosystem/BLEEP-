@@ -293,18 +293,24 @@ impl BlockProducer {
         //   2. VM StateDiff.balances    — EVM/WASM/ZK engine side-effects
         //      (contract-emitted balance changes beyond the simple transfer)
         let mut block_txs: Vec<Transaction> = Vec::with_capacity(tx_count);
+        let mut failed_tx_ids: Vec<String> = Vec::new(); // Track failed txs to remove from pool
         let mut total_gas: u64 = 0;
         {
             let mut state = self.state.lock();
             for (idx, gas, vm_ok, diff) in &vm_results {
+                let zt = &pending[*idx];
                 if !vm_ok {
                     warn!(
                         "[BlockProducer] VM reverted tx {}→{}",
-                        pending[*idx].sender, pending[*idx].receiver
+                        zt.sender, zt.receiver
                     );
+                    // Track this failed tx for removal from pool
+                    failed_tx_ids.push(format!(
+                        "{}:{}:{}:{}",
+                        zt.sender, zt.receiver, zt.amount, zt.timestamp
+                    ));
                     continue;
                 }
-                let zt = &pending[*idx];
 
                 // Path 1: native transfer (sender → receiver, exact amount)
                 let ok = state.apply_transfer(&zt.sender, &zt.receiver, zt.amount as u128);
@@ -313,6 +319,11 @@ impl BlockProducer {
                         "[BlockProducer] insufficient funds: {}→{} amt={}",
                         zt.sender, zt.receiver, zt.amount
                     );
+                    // Track this failed tx for removal from pool
+                    failed_tx_ids.push(format!(
+                        "{}:{}:{}:{}",
+                        zt.sender, zt.receiver, zt.amount, zt.timestamp
+                    ));
                     continue;
                 }
 
@@ -364,15 +375,13 @@ impl BlockProducer {
             state.advance_block();
         }
 
+        // Remove all failed transactions from pool to prevent recurring failures
+        for failed_tx_id in &failed_tx_ids {
+            self.tx_pool.remove_confirmed(failed_tx_id).await;
+        }
+
         if block_txs.is_empty() {
-            // All txs failed VM validation — drain pool and skip block
-            for zt in &pending {
-                let tx_id = format!(
-                    "{}:{}:{}:{}",
-                    zt.sender, zt.receiver, zt.amount, zt.timestamp
-                );
-                self.tx_pool.remove_confirmed(&tx_id).await;
-            }
+            // All txs failed — skip block but keep the pool clean (done above)
             return Ok(None);
         }
 
