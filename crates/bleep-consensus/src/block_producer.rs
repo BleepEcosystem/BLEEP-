@@ -32,6 +32,7 @@ use tracing::{error, info, warn};
 
 use bleep_core::block::{Block, ConsensusMode, Transaction};
 use bleep_core::blockchain::Blockchain;
+use bleep_core::ZKTransaction;
 use bleep_core::transaction_pool::TransactionPool;
 use bleep_state::state_manager::StateManager;
 use parking_lot::Mutex as PLMutex;
@@ -293,8 +294,9 @@ impl BlockProducer {
         //   2. VM StateDiff.balances    — EVM/WASM/ZK engine side-effects
         //      (contract-emitted balance changes beyond the simple transfer)
         let mut block_txs: Vec<Transaction> = Vec::with_capacity(tx_count);
-        let mut failed_tx_ids: Vec<String> = Vec::new(); // Track failed txs to remove from pool
+        let mut failed_tx_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
         let mut total_gas: u64 = 0;
+        let any_pending = !pending.is_empty();
         {
             let mut state = self.state.lock();
             for (idx, gas, vm_ok, diff) in &vm_results {
@@ -305,10 +307,7 @@ impl BlockProducer {
                         zt.sender, zt.receiver
                     );
                     // Track this failed tx for removal from pool
-                    failed_tx_ids.push(format!(
-                        "{}:{}:{}:{}",
-                        zt.sender, zt.receiver, zt.amount, zt.timestamp
-                    ));
+                    failed_tx_ids.insert(Self::canonical_tx_id(zt));
                     continue;
                 }
 
@@ -320,10 +319,7 @@ impl BlockProducer {
                         zt.sender, zt.receiver, zt.amount
                     );
                     // Track this failed tx for removal from pool
-                    failed_tx_ids.push(format!(
-                        "{}:{}:{}:{}",
-                        zt.sender, zt.receiver, zt.amount, zt.timestamp
-                    ));
+                    failed_tx_ids.insert(Self::canonical_tx_id(zt));
                     continue;
                 }
 
@@ -381,8 +377,14 @@ impl BlockProducer {
         }
 
         if block_txs.is_empty() {
-            // All txs failed — skip block but keep the pool clean (done above)
-            return Ok(None);
+            if any_pending {
+                info!(
+                    "[BlockProducer] All pending transactions failed; producing empty block {} to preserve liveness",
+                    next_height
+                );
+            } else {
+                return Ok(None);
+            }
         }
 
         // ── 5: Compute state root ─────────────────────────────────────────────
@@ -439,10 +441,13 @@ impl BlockProducer {
 
         // ── 10: Drain committed txs from pool ─────────────────────────────────
         for tx in &block_txs {
-            let tx_id = format!(
-                "{}:{}:{}:{}",
-                tx.sender, tx.receiver, tx.amount, tx.timestamp
-            );
+            let tx_id = Self::canonical_tx_id(&ZKTransaction {
+                sender: tx.sender.clone(),
+                receiver: tx.receiver.clone(),
+                amount: tx.amount,
+                timestamp: tx.timestamp,
+                signature: tx.signature.clone(),
+            });
             self.tx_pool.remove_confirmed(&tx_id).await;
         }
 
@@ -468,6 +473,13 @@ impl BlockProducer {
             state_root,
             gas_used: total_gas,
         }))
+    }
+
+    fn canonical_tx_id(zt: &ZKTransaction) -> String {
+        format!(
+            "{}:{}:{}:{}",
+            zt.sender, zt.receiver, zt.amount, zt.timestamp
+        )
     }
 }
 
