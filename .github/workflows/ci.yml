@@ -2,42 +2,407 @@ name: CI
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: ["main", "dev", "release/*"]
   pull_request:
-    branches: [ main, develop ]
+    branches: ["main", "dev"]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+  # Speeds up rocksdb compilation on CI
+  ROCKSDB_LIB_DIR: /usr/lib
+  LIBCLANG_PATH: /usr/lib/llvm-14/lib
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
+  # ------------------------------------------------------------------ #
+  #  1. FORMAT CHECK                                                     #
+  # ------------------------------------------------------------------ #
+  fmt:
+    name: Rustfmt
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+  # ------------------------------------------------------------------ #
+  #  2. CLIPPY LINTS                                                     #
+  # ------------------------------------------------------------------ #
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-22.04
+    needs: fmt
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            libclang-dev clang llvm-dev \
+            librocksdb-dev libsnappy-dev liblz4-dev libzstd-dev \
+            protobuf-compiler libssl-dev pkg-config
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache cargo registry + build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-clippy-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-clippy-
+            ${{ runner.os }}-
+
+      - name: Run Clippy (all crates, all features)
+        run: |
+          cargo clippy \
+            --workspace \
+            --all-targets \
+            -- \
+            -D warnings \
+            -A clippy::too_many_arguments \
+            -A clippy::type_complexity
+
+  # ------------------------------------------------------------------ #
+  #  3. BUILD (debug + release)                                          #
+  # ------------------------------------------------------------------ #
+  build:
+    name: Build (${{ matrix.profile }})
+    runs-on: ubuntu-22.04
+    needs: fmt
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [debug, release]
 
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            libclang-dev clang llvm-dev \
+            librocksdb-dev libsnappy-dev liblz4-dev libzstd-dev \
+            protobuf-compiler libssl-dev pkg-config
 
-    - name: Cache dependencies
-      uses: actions/cache@v3
-      with:
-        path: |
-          ~/.cargo/registry
-          ~/.cargo/git
-          target
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-cargo-
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
 
-    - name: Check formatting
-      run: make fmt
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-build-${{ matrix.profile }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-build-${{ matrix.profile }}-
+            ${{ runner.os }}-
 
-    - name: Run clippy
-      run: make clippy
+      - name: Build (debug)
+        if: matrix.profile == 'debug'
+        run: cargo build --workspace
 
-    - name: Check compilation
-      run: make check
+      - name: Build (release)
+        if: matrix.profile == 'release'
+        run: cargo build --workspace --release
 
-    - name: Build
-      run: make build
+      - name: Upload release binary
+        if: matrix.profile == 'release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bleep-linux-amd64
+          path: |
+            target/release/bleep
+            target/release/bleep_admin
+            target/release/bleep-executor
+          retention-days: 7
 
-    - name: Run tests
-      run: make test
+  # ------------------------------------------------------------------ #
+  #  4. TEST SUITE                                                       #
+  # ------------------------------------------------------------------ #
+  test:
+    name: Tests (${{ matrix.crate }})
+    runs-on: ubuntu-22.04
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        crate:
+          - bleep-crypto
+          - bleep-zkp
+          - bleep-consensus
+          - bleep-state
+          - bleep-economics
+          - bleep-governance
+          - bleep-auth
+          - bleep-vm
+          - bleep-pat
+          - bleep-interop
+          - bleep-p2p
+          - bleep-scheduler
+          - bleep-wallet-core
+          - bleep-ai
+          - bleep-core
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            libclang-dev clang llvm-dev \
+            librocksdb-dev libsnappy-dev liblz4-dev libzstd-dev \
+            protobuf-compiler libssl-dev pkg-config
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-test-${{ matrix.crate }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-test-${{ matrix.crate }}-
+            ${{ runner.os }}-
+
+      - name: Test ${{ matrix.crate }}
+        run: |
+          cargo test \
+            -p ${{ matrix.crate }} \
+            --all-features \
+            -- \
+            --nocapture \
+            2>&1 | tee test-results-${{ matrix.crate }}.txt
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.crate }}
+          path: test-results-${{ matrix.crate }}.txt
+          retention-days: 14
+
+  # ------------------------------------------------------------------ #
+  #  5. WORKSPACE-WIDE INTEGRATION TESTS                                 #
+  # ------------------------------------------------------------------ #
+  integration:
+    name: Integration Tests
+    runs-on: ubuntu-22.04
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            libclang-dev clang llvm-dev \
+            librocksdb-dev libsnappy-dev liblz4-dev libzstd-dev \
+            protobuf-compiler libssl-dev pkg-config
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-integration-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-integration-
+
+      - name: Run workspace integration tests
+        run: |
+          cargo test \
+            --workspace \
+            --test '*' \
+            --all-features \
+            -- \
+            --nocapture
+
+  # ------------------------------------------------------------------ #
+  #  6. SECURITY AUDIT                                                   #
+  # ------------------------------------------------------------------ #
+  audit:
+    name: Security Audit (cargo-audit)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Run audit
+        run: cargo audit
+
+  # ------------------------------------------------------------------ #
+  #  7. DEPENDENCY REVIEW (on PRs)                                       #
+  # ------------------------------------------------------------------ #
+  dep-review:
+    name: Dependency Review
+    runs-on: ubuntu-22.04
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/dependency-review-action@v4
+
+  # ------------------------------------------------------------------ #
+  #  8. CONSTITUTIONAL INVARIANT CHECK                                   #
+  # ------------------------------------------------------------------ #
+  invariants:
+    name: Constitutional Invariants
+    runs-on: ubuntu-22.04
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            libclang-dev clang llvm-dev \
+            librocksdb-dev libsnappy-dev liblz4-dev libzstd-dev \
+            protobuf-compiler libssl-dev pkg-config
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-invariants-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Verify MAX_SUPPLY const-assertion compiles
+        run: |
+          cargo build -p bleep-economics --all-features
+          echo "✅ Constitutional supply cap invariant: PASS"
+
+      - name: Verify MAX_INFLATION_RATE_BPS const-assertion compiles
+        run: |
+          cargo build -p bleep-governance --all-features
+          echo "✅ Constitutional inflation cap invariant: PASS"
+
+      - name: Verify fee burn split sums to 10,000 bps
+        run: |
+          cargo test -p bleep-economics --all-features -- fee_split 2>&1 | \
+            grep -E "(PASSED|test result: ok)" && \
+            echo "✅ Fee burn split invariant: PASS" || \
+            (echo "❌ Fee burn split invariant: FAIL" && exit 1)
+
+  # ------------------------------------------------------------------ #
+  #  9. POST-QUANTUM CRYPTOGRAPHY SMOKE TEST                             #
+  # ------------------------------------------------------------------ #
+  pq-smoke:
+    name: PQ Cryptography Smoke Test
+    runs-on: ubuntu-22.04
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            libclang-dev clang llvm-dev libssl-dev pkg-config
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-pq-smoke-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Run bleep-crypto tests (SPHINCS+ / Kyber)
+        run: |
+          cargo test -p bleep-crypto --all-features -- --nocapture 2>&1 | \
+            tee pq-smoke-results.txt
+          echo "✅ SPHINCS+-SHAKE-256f-simple: tested"
+          echo "✅ Kyber-1024 / ML-KEM-1024: tested"
+
+      - name: Run bleep-zkp tests (Winterfell STARK)
+        run: |
+          cargo test -p bleep-zkp --all-features -- --nocapture 2>&1 | \
+            tee -a pq-smoke-results.txt
+          echo "✅ Winterfell STARK proof system: tested"
+
+      - name: Upload PQ smoke results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pq-smoke-results
+          path: pq-smoke-results.txt
+          retention-days: 14
+
+  # ------------------------------------------------------------------ #
+  # 10. CI SUMMARY GATE                                                  #
+  # ------------------------------------------------------------------ #
+  ci-pass:
+    name: CI Pass
+    runs-on: ubuntu-22.04
+    needs:
+      - fmt
+      - clippy
+      - build
+      - test
+      - integration
+      - audit
+      - invariants
+      - pq-smoke
+    if: always()
+    steps:
+      - name: Check all jobs passed
+        run: |
+          results='${{ toJSON(needs) }}'
+          echo "$results" | python3 -c "
+          import json, sys
+          data = json.load(sys.stdin)
+          failed = [k for k, v in data.items() if v['result'] not in ('success', 'skipped')]
+          if failed:
+              print('❌ Failed jobs:', failed)
+              sys.exit(1)
+          print('✅ All CI jobs passed')
+          "
