@@ -4,14 +4,6 @@
 
 ### A Post-Quantum Cryptographic Foundation for Secure Decentralised Execution
 
-[![CI](https://github.com/BleepEcosystem/BLEEP-v1/actions/workflows/ci.yml/badge.svg)](https://github.com/BleepEcosystem/BLEEP-v1/actions/workflows/ci.yml)
-[![Security](https://github.com/BleepEcosystem/BLEEP-v1/actions/workflows/security.yml/badge.svg)](https://github.com/BleepEcosystem/BLEEP-v1/actions/workflows/security.yml)
-[![Release](https://img.shields.io/github/v/release/BleepEcosystem/BLEEP-v1?include_prereleases&label=release)](https://github.com/BleepEcosystem/BLEEP-v1/releases)
-[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-[![Rust](https://img.shields.io/badge/rust-stable-orange.svg)](rust-toolchain.toml)
-[![Protocol](https://img.shields.io/badge/protocol-v4%20pre--testnet-green.svg)](WHITEPAPER.md)
-[![Audit](https://img.shields.io/badge/audit-sprint%209%20complete-brightgreen.svg)](docs/SECURITY_AUDIT_SPRINT9.md)
-
 **[Website](https://www.bleepecosystem.com) · [Whitepaper](WHITEPAPER.md) · [Roadmap](ROADMAP.md) · [Discord](https://discord.gg/bleepecosystem) · [Telegram](https://t.me/bleepecosystem) · [BUILDING](BUILDING.md)**
 
 </div>
