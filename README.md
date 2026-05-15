@@ -39,8 +39,16 @@ Protocol v4 | Chain: bleep-testnet-1 | 10 shards | 7 validators
 
 ## Live Demo — BLEEP → Ethereum Interchain Transfer
 
+Before running the demo, deploy the Sepolia relay contract and export its address:
+
 ```bash
-cd /workspaces/BLEEP-v1 && bash ./demo_interchain.sh
+cd /workspaces/BLEEP-v1
+export SEPOLIA_RPC_URL=https://...
+export SEPOLIA_PRIVATE_KEY=0x...
+bash ./scripts/deploy_testnet.sh
+# then export the deployed address:
+# export SEPOLIA_BLEEP_FULFILL_ADDR=0x...
+bash ./demo_interchain.sh
 ```
 
 ```

@@ -11,16 +11,20 @@ echo "===================================="
 echo "📡 Checking BLEEP node status..."
 if ! curl -s --connect-timeout 5 http://127.0.0.1:8545/rpc/health >/dev/null; then
     echo "❌ BLEEP node not running. Please start it first:"
-    echo "   SEPOLIA_BLEEP_FULFILL_ADDR=0x1234567890abcdef1234567890abcdef12345678 ./target/release/bleep"
+    echo "   export SEPOLIA_BLEEP_FULFILL_ADDR=<deployed-sepolia-contract>"
+    echo "   ./target/release/bleep"
     exit 1
 fi
 echo "✅ BLEEP node is running"
 
-# Check environment variable
+# Require a real Sepolia contract address
 if [[ -z "${SEPOLIA_BLEEP_FULFILL_ADDR:-}" ]]; then
-    echo "⚠️  SEPOLIA_BLEEP_FULFILL_ADDR not set. Setting to test value..."
-    export SEPOLIA_BLEEP_FULFILL_ADDR=0x1234567890abcdef1234567890abcdef12345678
+    echo "❌ SEPOLIA_BLEEP_FULFILL_ADDR must be set to the deployed Sepolia BleepFulfill contract address."
+    echo "   export SEPOLIA_BLEEP_FULFILL_ADDR=0x..."
+    exit 1
 fi
+# Normalize address if needed
+SEPOLIA_BLEEP_FULFILL_ADDR=$(printf "%s" "$SEPOLIA_BLEEP_FULFILL_ADDR" | tr '[:upper:]' '[:lower:]')
 echo "✅ Sepolia contract address: $SEPOLIA_BLEEP_FULFILL_ADDR"
 
 # Generate JWT auth token for protected RPC endpoints

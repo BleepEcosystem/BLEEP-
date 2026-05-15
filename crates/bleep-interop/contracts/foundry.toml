@@ -1,0 +1,11 @@
+[profile.default]
+src = 'src'
+out = 'out'
+libs = ['lib']
+
+# Sepolia testnet configuration
+[rpc_endpoints]
+sepolia = "https://rpc.sepolia.org"
+
+[etherscan]
+sepolia = { key = "${ETHERSCAN_API_KEY}" }
