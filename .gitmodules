@@ -1,0 +1,3 @@
+[submodule "crates/bleep-interop/contracts/lib/forge-std"]
+	path = crates/bleep-interop/contracts/lib/forge-std
+	url = https://github.com/foundry-rs/forge-std
