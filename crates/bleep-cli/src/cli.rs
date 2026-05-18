@@ -25,6 +25,7 @@ use bleep_cli::{
 };
 
 // Real crate imports
+use base64::Engine;
 use bleep_ai::{
     ai_assistant::{AIRequest, BLEEPAIAssistant},
     analytics::BLEEPAnalytics,
@@ -37,6 +38,8 @@ use bleep_ai::{
     smart_contracts::SmartContractOptimizer,
     wallet::BLEEPWallet,
 };
+use bleep_auth::session::SessionManager;
+use bleep_auth::Role;
 use bleep_core::transaction::ZKTransaction;
 use bleep_crypto::bip39::{mnemonic_to_bleep_seed, validate_mnemonic};
 use bleep_crypto::tx_signer::{generate_tx_keypair, sign_tx_payload, tx_payload};
@@ -44,9 +47,6 @@ use bleep_governance::governance_core::{GovernanceEngine, Proposal, ProposalType
 use bleep_state::state_manager::StateManager;
 use bleep_wallet_core::wallet::WalletManager;
 use bleep_zkp::Verifier as ZkVerifier;
-use bleep_auth::session::SessionManager;
-use bleep_auth::Role;
-use base64::Engine;
 
 /// Default RPC endpoint (override via BLEEP_RPC env var).
 const DEFAULT_RPC: &str = "http://127.0.0.1:8545";
@@ -1091,12 +1091,10 @@ async fn get_block_by_id(rpc: &str, id: &str) -> Result<String> {
 /// Generate JWT token for RPC authentication
 async fn get_jwt_token_sync() -> Result<String> {
     let jwt_secret_b64 = std::env::var("BLEEP_JWT_SECRET").unwrap_or_else(|_| {
-        println!(
-            "⚠️  BLEEP_JWT_SECRET env var not set. Using default dev auth secret."
-        );
+        println!("⚠️  BLEEP_JWT_SECRET env var not set. Using default dev auth secret.");
         DEFAULT_BLEEP_JWT_SECRET_B64.to_string()
     });
-    
+
     let base64_engine = base64::engine::general_purpose::STANDARD;
     let jwt_secret = match base64_engine.decode(&jwt_secret_b64) {
         Ok(secret) if secret.len() >= 32 => secret,
@@ -1118,34 +1116,38 @@ async fn get_jwt_token_sync() -> Result<String> {
                 .expect("default JWT secret is valid base64")
         }
     };
-    
+
     let session_mgr = SessionManager::new(jwt_secret)
         .map_err(|e| anyhow!("Failed to create SessionManager: {}", e))?;
-    
+
     // Issue a session token valid for 1 hour
-    let token = session_mgr.issue("bleep-cli", &[Role::DappDeveloper], chrono::Duration::hours(1))
+    let token = session_mgr
+        .issue(
+            "bleep-cli",
+            &[Role::DappDeveloper],
+            chrono::Duration::hours(1),
+        )
         .await
         .map_err(|e| anyhow!("Failed to issue session token: {}", e))?;
-    
+
     eprintln!("[DEBUG] JWT Token: {}", token.token);
-    
+
     Ok(token.token)
 }
 
 /// Get JWT token from async context
 async fn get_jwt_token() -> Result<String> {
-    get_jwt_token_sync()
-        .await
+    get_jwt_token_sync().await
 }
 
 /// POST /rpc/tx  with the ZKTransaction as JSON
 async fn post_transaction(rpc: &str, tx: &ZKTransaction) -> Result<String> {
     let url = format!("{}/rpc/tx", rpc);
     let client = reqwest::Client::new();
-    
+
     // Get JWT token for authentication
     let jwt_token = get_jwt_token().await?;
-    
+
     let resp = client
         .post(&url)
         .header("authorization", format!("Bearer {}", jwt_token))
@@ -1154,7 +1156,7 @@ async fn post_transaction(rpc: &str, tx: &ZKTransaction) -> Result<String> {
         .await?
         .text()
         .await?;
-    
+
     Ok(resp)
 }
 

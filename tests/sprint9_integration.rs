@@ -21,7 +21,10 @@ mod chaos_integration {
             "expected ≥80% pass rate, got {:.1}%",
             summary.pass_rate_pct
         );
-        assert_eq!(passed, summary.all_passed, "run_full_suite result must match summary");
+        assert_eq!(
+            passed, summary.all_passed,
+            "run_full_suite result must match summary"
+        );
     }
 
     #[test]
@@ -58,15 +61,11 @@ mod zkp_circuit_integration {
     #[test]
     fn zkp_block_verifier_rejects_invalid_proof() {
         let verifier = BlockVerifier::new();
-        let result = verifier.verify(
-            &[0u8; 16],
-            0,
-            0,
-            0,
-            &[0u8; 32],
-            &[0u8; 32],
+        let result = verifier.verify(&[0u8; 16], 0, 0, 0, &[0u8; 32], &[0u8; 32]);
+        assert!(
+            result.is_err(),
+            "invalid proof bytes must fail verification"
         );
-        assert!(result.is_err(), "invalid proof bytes must fail verification");
     }
 }
 
@@ -74,7 +73,7 @@ mod zkp_circuit_integration {
 
 #[cfg(test)]
 mod layer3_bridge_integration {
-    use bleep_interop::layer3_bridge::{Chain, Layer3Bridge, L3State, L3_BATCH_SIZE};
+    use bleep_interop::layer3_bridge::{Chain, L3State, Layer3Bridge, L3_BATCH_SIZE};
     use bleep_interop::nullifier_store::GlobalNullifierSet;
 
     #[test]
@@ -94,9 +93,14 @@ mod layer3_bridge_integration {
             );
             ids.push(id);
         }
-        let proof = bridge.flush_batch([0xCA; 32], [0xFE; 32]).expect("failed to flush batch");
+        let proof = bridge
+            .flush_batch([0xCA; 32], [0xFE; 32])
+            .expect("failed to flush batch");
         assert_eq!(proof.batch_ids.len(), L3_BATCH_SIZE);
-        assert!(proof.proof_bytes.len() >= 192, "proof bytes must be nontrivial");
+        assert!(
+            proof.proof_bytes.len() >= 192,
+            "proof bytes must be nontrivial"
+        );
 
         // Ensure all intents are ready after batch flush.
         for id in &ids {
@@ -147,7 +151,9 @@ mod layer3_bridge_integration {
             1,
         );
 
-        let proof = bridge.flush_batch([0x11; 32], [0x22; 32]).expect("failed to flush batch");
+        let proof = bridge
+            .flush_batch([0x11; 32], [0x22; 32])
+            .expect("failed to flush batch");
         assert_eq!(proof.batch_ids.len(), 1);
 
         // First submission: proof should verify and finalize normally.
@@ -158,7 +164,10 @@ mod layer3_bridge_integration {
         let nullifier = proof.batch_ids[0];
         assert!(!ns.is_spent(&nullifier));
         ns.spend(nullifier).unwrap();
-        assert!(ns.spend(nullifier).is_err(), "replay must be blocked by nullifier store");
+        assert!(
+            ns.spend(nullifier).is_err(),
+            "replay must be blocked by nullifier store"
+        );
     }
 }
 

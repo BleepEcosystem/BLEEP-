@@ -32,8 +32,8 @@ use tracing::{error, info, warn};
 
 use bleep_core::block::{Block, ConsensusMode, Transaction};
 use bleep_core::blockchain::Blockchain;
-use bleep_core::ZKTransaction;
 use bleep_core::transaction_pool::TransactionPool;
+use bleep_core::ZKTransaction;
 use bleep_state::state_manager::StateManager;
 use parking_lot::Mutex as PLMutex;
 

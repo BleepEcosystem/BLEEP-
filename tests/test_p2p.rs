@@ -11,7 +11,9 @@ async fn start_node(port: u16) -> (Arc<P2PNode>, NodeHandle) {
         bootstrap_peers: vec![],
         peer_manager_config: Default::default(),
     };
-    P2PNode::start(config).await.expect("Failed to start P2P node")
+    P2PNode::start(config)
+        .await
+        .expect("Failed to start P2P node")
 }
 
 #[tokio::test]
@@ -39,7 +41,11 @@ async fn test_p2p_node_connects_peer_and_reports_peer_count() {
 
     assert!(!peer_id.as_bytes().is_empty(), "Peer ID must be valid");
     assert_eq!(node1.peer_count(), 1, "Node1 should report one peer");
-    assert_eq!(node2.peer_count(), 0, "Node2 should report zero peers until it initiates a connection");
+    assert_eq!(
+        node2.peer_count(),
+        0,
+        "Node2 should report zero peers until it initiates a connection"
+    );
 
     handle1.shutdown().await;
     handle2.shutdown().await;

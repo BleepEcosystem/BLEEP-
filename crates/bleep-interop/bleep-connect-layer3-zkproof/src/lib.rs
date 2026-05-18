@@ -120,7 +120,9 @@ impl ProofGenerator {
     pub fn new_shared() -> BleepConnectResult<(ProofGenerator, ProofVerifier)> {
         let (public_key, signing_key) = SignatureScheme::keygen_from_seed(L3_PROOF_KEY_SEED)
             .map_err(|e| {
-                BleepConnectError::InternalError(format!("Shared proof key generation failed: {e:?}"))
+                BleepConnectError::InternalError(format!(
+                    "Shared proof key generation failed: {e:?}"
+                ))
             })?;
         let generator = ProofGenerator::new_with_signing_key(signing_key)?;
         let verifier = ProofVerifier::new_with_public_key(public_key)?;
@@ -205,7 +207,9 @@ impl ProofVerifier {
     pub fn new_shared() -> BleepConnectResult<(ProofGenerator, ProofVerifier)> {
         let (public_key, signing_key) = SignatureScheme::keygen_from_seed(L3_PROOF_KEY_SEED)
             .map_err(|e| {
-                BleepConnectError::InternalError(format!("Shared proof key generation failed: {e:?}"))
+                BleepConnectError::InternalError(format!(
+                    "Shared proof key generation failed: {e:?}"
+                ))
             })?;
         let generator = ProofGenerator::new_with_signing_key(signing_key)?;
         let verifier = ProofVerifier::new_with_public_key(public_key)?;

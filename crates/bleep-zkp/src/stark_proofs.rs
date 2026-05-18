@@ -331,9 +331,7 @@ impl BlockValidityProver {
         let validator_pk_hash = crate::hash_to_31_bytes(validator_pk_bytes);
 
         // Serialize a custom block proof envelope with strong metadata and the raw Winterfell proof.
-        let mut proof_bytes = Vec::with_capacity(
-            8 + 8 + 8 + 8 + 31 + 31 + proof.to_bytes().len(),
-        );
+        let mut proof_bytes = Vec::with_capacity(8 + 8 + 8 + 8 + 31 + 31 + proof.to_bytes().len());
         proof_bytes.extend_from_slice(b"STARK_V1");
         proof_bytes.extend_from_slice(&block_index.to_le_bytes());
         proof_bytes.extend_from_slice(&epoch_id.to_le_bytes());
@@ -507,9 +505,10 @@ impl BlockValidityVerifier {
             .map_err(|_| "Failed to parse merkle root hash".to_string())?;
         offset += 31;
 
-        let proof_validator_pk_hash: [u8; 31] = proof.proof_bytes[offset..offset + 31]
-            .try_into()
-            .map_err(|_| "Failed to parse validator pk hash".to_string())?;
+        let proof_validator_pk_hash: [u8; 31] =
+            proof.proof_bytes[offset..offset + 31]
+                .try_into()
+                .map_err(|_| "Failed to parse validator pk hash".to_string())?;
 
         if proof_block_index != block_index
             || proof_epoch_id != epoch_id
@@ -537,15 +536,14 @@ impl BlockValidityVerifier {
 
         // Verify the proof using Winterfell
         let acceptable_options = AcceptableOptions::MinConjecturedSecurity(95);
-        let result = verify::<BlockValidityAir,
-                              winterfell::crypto::hashers::Blake3_256<BaseElement>,
-                              winterfell::crypto::DefaultRandomCoin<winterfell::crypto::hashers::Blake3_256<BaseElement>>,
-                              winterfell::crypto::MerkleTree<winterfell::crypto::hashers::Blake3_256<BaseElement>>
-                             >(
-            winterfell_proof,
-            (),
-            &acceptable_options,
-        );
+        let result = verify::<
+            BlockValidityAir,
+            winterfell::crypto::hashers::Blake3_256<BaseElement>,
+            winterfell::crypto::DefaultRandomCoin<
+                winterfell::crypto::hashers::Blake3_256<BaseElement>,
+            >,
+            winterfell::crypto::MerkleTree<winterfell::crypto::hashers::Blake3_256<BaseElement>>,
+        >(winterfell_proof, (), &acceptable_options);
 
         match result {
             Ok(_) => {

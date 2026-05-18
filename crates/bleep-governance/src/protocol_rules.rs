@@ -335,10 +335,7 @@ impl ProtocolRuleSetFactory {
         rules.add_rule(ProtocolRule::new(
             "MIN_VALIDATOR_STAKE".to_string(),
             1000u128 * 10u128.pow(18), // 1000 BLP with 18 decimals
-            RuleBounds::new(
-                100u128 * 10u128.pow(18),
-                10_000u128 * 10u128.pow(18),
-            )?,
+            RuleBounds::new(100u128 * 10u128.pow(18), 10_000u128 * 10u128.pow(18))?,
             "Minimum stake to become a validator".to_string(),
             true,
             0,

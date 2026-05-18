@@ -8,8 +8,8 @@
 //! - Veto mechanism for constitutional violations
 //! - Governance event log for audit
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use serde::{Serialize, Deserialize};
 
 // ── Protocol parameters that governance can change ────────────────────────────
 

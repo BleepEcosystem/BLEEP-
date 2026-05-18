@@ -506,7 +506,7 @@ mod tests {
     use super::*;
     use crate::apip::{AIModelMetadata, APIPBuilder, RuleChange};
     use crate::protocol_rules::ProtocolRuleSetFactory;
-    use crate::{RuleVersion, RiskLevel};
+    use crate::{RiskLevel, RuleVersion};
 
     fn create_test_orchestrator() -> ProtocolEvolutionOrchestrator {
         let genesis = ProtocolRuleSetFactory::create_genesis().unwrap();

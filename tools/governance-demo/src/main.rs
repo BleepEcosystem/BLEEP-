@@ -1,9 +1,11 @@
 mod keystore;
 
-use bleep_governance::live_governance::{GovernableParam, GovernanceConfig, LiveGovernanceEngine, Vote};
+use bleep_governance::live_governance::{
+    GovernableParam, GovernanceConfig, LiveGovernanceEngine, Vote,
+};
 use rpassword::prompt_password;
-use std::io::{self, Write};
 use std::fs;
+use std::io::{self, Write};
 use std::path::Path;
 
 fn print_help() {
@@ -22,7 +24,9 @@ fn print_help() {
 
 fn parse_param(s: &str) -> Option<GovernableParam> {
     let parts: Vec<&str> = s.splitn(2, '=').collect();
-    if parts.len() != 2 { return None; }
+    if parts.len() != 2 {
+        return None;
+    }
     let name = parts[0];
     let val = parts[1];
     match name {
@@ -30,8 +34,14 @@ fn parse_param(s: &str) -> Option<GovernableParam> {
         "max_txs_per_block" => val.parse().ok().map(GovernableParam::MaxTxsPerBlock),
         "max_inflation_bps" => val.parse().ok().map(GovernableParam::MaxInflationBps),
         "fee_burn_bps" => val.parse().ok().map(GovernableParam::FeeBurnBps),
-        "downtime_penalty_per_block" => val.parse().ok().map(GovernableParam::DowntimePenaltyPerBlock),
-        "equivocation_penalty_bps" => val.parse().ok().map(GovernableParam::EquivocationPenaltyBps),
+        "downtime_penalty_per_block" => val
+            .parse()
+            .ok()
+            .map(GovernableParam::DowntimePenaltyPerBlock),
+        "equivocation_penalty_bps" => val
+            .parse()
+            .ok()
+            .map(GovernableParam::EquivocationPenaltyBps),
         "min_validator_stake" => val.parse().ok().map(GovernableParam::MinValidatorStake),
         "oracle_quorum" => val.parse().ok().map(GovernableParam::OracleQuorum),
         "faucet_drip_amount" => val.parse().ok().map(GovernableParam::FaucetDripAmount),
@@ -45,7 +55,10 @@ mod helper {
     use bleep_governance::live_governance::GovernableParam;
     pub fn parse_param(name: &str, val: &str) -> Option<GovernableParam> {
         match name {
-            "downtime_penalty_per_block" => val.parse().ok().map(GovernableParam::DowntimePenaltyPerBlock),
+            "downtime_penalty_per_block" => val
+                .parse()
+                .ok()
+                .map(GovernableParam::DowntimePenaltyPerBlock),
             _ => None,
         }
     }
@@ -54,7 +67,7 @@ mod helper {
 fn main() {
     let mut engine = LiveGovernanceEngine::new(GovernanceConfig::default(), 1_000);
     println!("BLEEP Governance Demo (in-memory). Type 'help' for commands.");
-    let mut unlocked: Option<(String,String)> = None; // (name, privhex)
+    let mut unlocked: Option<(String, String)> = None; // (name, privhex)
 
     // Attempt to load persisted state if present
     let default_state = Path::new("state.json");
@@ -80,17 +93,26 @@ fn main() {
         if line.is_empty() {
             continue;
         }
-        let mut parts = shell_words::split(line).unwrap_or_else(|_| line.split_whitespace().map(|s| s.to_string()).collect());
-        if parts.is_empty() { continue; }
+        let mut parts = shell_words::split(line)
+            .unwrap_or_else(|_| line.split_whitespace().map(|s| s.to_string()).collect());
+        if parts.is_empty() {
+            continue;
+        }
         let cmd = parts.remove(0);
         match cmd.as_str() {
             "help" => print_help(),
             "keystore" => {
-                if parts.is_empty() { println!("usage: keystore <create|import|list|unlock> ..."); continue; }
+                if parts.is_empty() {
+                    println!("usage: keystore <create|import|list|unlock> ...");
+                    continue;
+                }
                 let sub = parts.remove(0);
                 match sub.as_str() {
                     "create" | "import" => {
-                        if parts.len() < 2 { println!("usage: keystore {} <name> <privhex>", sub); continue; }
+                        if parts.len() < 2 {
+                            println!("usage: keystore {} <name> <privhex>", sub);
+                            continue;
+                        }
                         let name = parts.remove(0);
                         let privhex = parts.remove(0);
                         let pass = prompt_password("passphrase: ").unwrap_or_default();
@@ -99,17 +121,22 @@ fn main() {
                             Err(e) => println!("keystore error: {}", e),
                         }
                     }
-                    "list" => {
-                        match keystore::list_keys() {
-                            Ok(list) => {
-                                if list.is_empty() { println!("no keys"); }
-                                for (n,f) in list { println!("{}  fingerprint={}", n, f); }
+                    "list" => match keystore::list_keys() {
+                        Ok(list) => {
+                            if list.is_empty() {
+                                println!("no keys");
                             }
-                            Err(e) => println!("keystore error: {}", e),
+                            for (n, f) in list {
+                                println!("{}  fingerprint={}", n, f);
+                            }
                         }
-                    }
+                        Err(e) => println!("keystore error: {}", e),
+                    },
                     "unlock" => {
-                        if parts.len() < 1 { println!("usage: keystore unlock <name>"); continue; }
+                        if parts.len() < 1 {
+                            println!("usage: keystore unlock <name>");
+                            continue;
+                        }
                         let name = parts.remove(0);
                         let pass = prompt_password("passphrase: ").unwrap_or_default();
                         match keystore::unlock_key(&name, &pass) {
@@ -127,7 +154,9 @@ fn main() {
             "exit" | "quit" => break,
             "propose" => {
                 if parts.len() < 3 {
-                    println!("usage: propose <proposer> <title> <description> [param=value] [deposit]");
+                    println!(
+                        "usage: propose <proposer> <title> <description> [param=value] [deposit]"
+                    );
                     continue;
                 }
                 let mut proposer = parts.remove(0);
@@ -143,7 +172,7 @@ fn main() {
                             } else {
                                 // try helper for float
                                 let kv: Vec<&str> = p.splitn(2, '=').collect();
-                                if kv.len()==2 {
+                                if kv.len() == 2 {
                                     if let Some(pp) = helper::parse_param(kv[0], kv[1]) {
                                         param = Some(pp);
                                     }
@@ -159,7 +188,8 @@ fn main() {
                     if let Some((ref name, _)) = unlocked {
                         proposer = format!("bleep:demo:{}", name);
                     } else {
-                        println!("no unlocked key; use keystore unlock <name>"); continue;
+                        println!("no unlocked key; use keystore unlock <name>");
+                        continue;
                     }
                 }
 
@@ -174,25 +204,36 @@ fn main() {
             }
             "vote" => {
                 if parts.len() < 4 {
-                    println!("usage: vote <proposal_id> <voter> <yes|no|abstain|veto> <voting_power>");
+                    println!(
+                        "usage: vote <proposal_id> <voter> <yes|no|abstain|veto> <voting_power>"
+                    );
                     continue;
                 }
                 let pid: u64 = match parts.remove(0).parse() {
                     Ok(v) => v,
-                    Err(_) => { println!("invalid proposal id"); continue; }
+                    Err(_) => {
+                        println!("invalid proposal id");
+                        continue;
+                    }
                 };
                 let voter = parts.remove(0);
                 let vt = parts.remove(0).to_lowercase();
                 let voting_power: u128 = match parts.remove(0).parse() {
                     Ok(v) => v,
-                    Err(_) => { println!("invalid voting power"); continue; }
+                    Err(_) => {
+                        println!("invalid voting power");
+                        continue;
+                    }
                 };
                 let vote = match vt.as_str() {
                     "yes" => Vote::Yes,
                     "no" => Vote::No,
                     "abstain" => Vote::Abstain,
                     "veto" => Vote::Veto,
-                    _ => { println!("unknown vote type"); continue; }
+                    _ => {
+                        println!("unknown vote type");
+                        continue;
+                    }
                 };
                 match engine.vote(pid, &voter, vote, voting_power) {
                     Ok(_) => println!("vote recorded"),
@@ -205,48 +246,118 @@ fn main() {
                     println!("no active proposals");
                 } else {
                     for p in active {
-                        println!("id={} title='{}' proposer={} state={:?}", p.id, p.title, p.proposer, p.state);
+                        println!(
+                            "id={} title='{}' proposer={} state={:?}",
+                            p.id, p.title, p.proposer, p.state
+                        );
                     }
                 }
             }
             "status" => {
-                if parts.len() < 1 { println!("usage: status <proposal_id>"); continue; }
-                let pid: u64 = match parts.remove(0).parse() { Ok(v)=>v, Err(_)=>{ println!("invalid id"); continue; } };
+                if parts.len() < 1 {
+                    println!("usage: status <proposal_id>");
+                    continue;
+                }
+                let pid: u64 = match parts.remove(0).parse() {
+                    Ok(v) => v,
+                    Err(_) => {
+                        println!("invalid id");
+                        continue;
+                    }
+                };
                 if let Some(p) = engine.proposal(pid) {
                     println!("Proposal {}: {}", p.id, p.title);
                     println!("  proposer: {}", p.proposer);
                     println!("  state: {:?}", p.state);
-                    println!("  yes: {} no: {} abstain: {} veto: {}", p.yes_votes, p.no_votes, p.abstain_votes, p.veto_votes);
-                    println!("  created at block: {} voting end block: {}", p.created_at_block, p.voting_end_block);
-                } else { println!("proposal not found"); }
+                    println!(
+                        "  yes: {} no: {} abstain: {} veto: {}",
+                        p.yes_votes, p.no_votes, p.abstain_votes, p.veto_votes
+                    );
+                    println!(
+                        "  created at block: {} voting end block: {}",
+                        p.created_at_block, p.voting_end_block
+                    );
+                } else {
+                    println!("proposal not found");
+                }
             }
             "tally" => {
-                if parts.len() < 1 { println!("usage: tally <proposal_id>"); continue; }
-                let pid: u64 = match parts.remove(0).parse() { Ok(v)=>v, Err(_)=>{ println!("invalid id"); continue; } };
+                if parts.len() < 1 {
+                    println!("usage: tally <proposal_id>");
+                    continue;
+                }
+                let pid: u64 = match parts.remove(0).parse() {
+                    Ok(v) => v,
+                    Err(_) => {
+                        println!("invalid id");
+                        continue;
+                    }
+                };
                 match engine.tally(pid) {
                     Ok(state) => println!("tally result: {:?}", state),
                     Err(e) => println!("tally error: {:?}", e),
                 }
-                if let Ok(j) = engine.export_state() { let _ = fs::write("state.json", j); }
+                if let Ok(j) = engine.export_state() {
+                    let _ = fs::write("state.json", j);
+                }
             }
             "execute" => {
-                if parts.len() < 1 { println!("usage: execute <proposal_id>"); continue; }
-                let pid: u64 = match parts.remove(0).parse() { Ok(v)=>v, Err(_)=>{ println!("invalid id"); continue; } };
+                if parts.len() < 1 {
+                    println!("usage: execute <proposal_id>");
+                    continue;
+                }
+                let pid: u64 = match parts.remove(0).parse() {
+                    Ok(v) => v,
+                    Err(_) => {
+                        println!("invalid id");
+                        continue;
+                    }
+                };
                 match engine.execute(pid) {
-                    Ok(res) => println!("executed proposal {} tx={} param={:?}", res.proposal_id, res.tx_hash, res.param_applied),
+                    Ok(res) => println!(
+                        "executed proposal {} tx={} param={:?}",
+                        res.proposal_id, res.tx_hash, res.param_applied
+                    ),
                     Err(e) => println!("execute error: {:?}", e),
                 }
-                if let Ok(j) = engine.export_state() { let _ = fs::write("state.json", j); }
+                if let Ok(j) = engine.export_state() {
+                    let _ = fs::write("state.json", j);
+                }
             }
             "advance" => {
-                if parts.len() < 1 { println!("usage: advance <blocks>"); continue; }
-                let blocks: u64 = match parts.remove(0).parse() { Ok(v)=>v, Err(_)=>{ println!("invalid number"); continue; } };
+                if parts.len() < 1 {
+                    println!("usage: advance <blocks>");
+                    continue;
+                }
+                let blocks: u64 = match parts.remove(0).parse() {
+                    Ok(v) => v,
+                    Err(_) => {
+                        println!("invalid number");
+                        continue;
+                    }
+                };
                 engine.advance_block(blocks);
-                println!("advanced {} blocks, current_block={}", blocks, engine.event_log().last().map(|_| engine.event_log().last().unwrap().block).unwrap_or(engine.proposal(0).map(|p| p.created_at_block).unwrap_or(engine.event_log().len() as u64)));
+                println!(
+                    "advanced {} blocks, current_block={}",
+                    blocks,
+                    engine
+                        .event_log()
+                        .last()
+                        .map(|_| engine.event_log().last().unwrap().block)
+                        .unwrap_or(
+                            engine
+                                .proposal(0)
+                                .map(|p| p.created_at_block)
+                                .unwrap_or(engine.event_log().len() as u64)
+                        )
+                );
             }
             "events" => {
                 for e in engine.event_log() {
-                    println!("[block {}] {} proposal={} actor={} detail={}", e.block, e.kind, e.proposal, e.actor, e.detail);
+                    println!(
+                        "[block {}] {} proposal={} actor={} detail={}",
+                        e.block, e.kind, e.proposal, e.actor, e.detail
+                    );
                 }
             }
             "save" => {

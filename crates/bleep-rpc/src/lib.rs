@@ -36,8 +36,8 @@ use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use warp::Filter;
 
-use bleep_auth::{AuthService, AuthError, SessionClaims};
-use bleep_core::{Blockchain, transaction_pool::TransactionPool};
+use bleep_auth::{AuthError, AuthService, SessionClaims};
+use bleep_core::{transaction_pool::TransactionPool, Blockchain};
 
 // ─── Auth rejection ──────────────────────────────────────────────────────────
 
@@ -448,49 +448,51 @@ pub fn rpc_routes_with_state(
         .and(warp::body::json::<TxReq>())
         .and(auth_filter(Arc::clone(&state_inner)))
         .and(with_rpc_state(rpc.clone()))
-        .and_then(|req: TxReq, _claims: SessionClaims, st: RpcState| async move {
-            // Check if TransactionPool is attached
-            let pool = match st.transaction_pool {
-                Some(p) => p,
-                None => {
+        .and_then(
+            |req: TxReq, _claims: SessionClaims, st: RpcState| async move {
+                // Check if TransactionPool is attached
+                let pool = match st.transaction_pool {
+                    Some(p) => p,
+                    None => {
+                        let resp = warp::reply::json(&TxResp {
+                            tx_id: "error".to_string(),
+                            status: "TransactionPool not attached to RPC state",
+                        });
+                        return Ok::<_, warp::Rejection>(resp);
+                    }
+                };
+
+                // Create ZKTransaction from request
+                let tx = bleep_core::transaction::ZKTransaction {
+                    sender: req.sender.clone(),
+                    receiver: req.receiver.clone(),
+                    amount: req.amount,
+                    timestamp: req.timestamp,
+                    signature: req.signature,
+                };
+
+                // Try to add transaction to pool
+                let admitted = pool.add_transaction(tx).await;
+
+                if admitted {
+                    let tx_id = format!(
+                        "{}:{}:{}:{}",
+                        req.sender, req.receiver, req.amount, req.timestamp
+                    );
                     let resp = warp::reply::json(&TxResp {
-                        tx_id: "error".to_string(),
-                        status: "TransactionPool not attached to RPC state",
+                        tx_id,
+                        status: "accepted",
                     });
-                    return Ok::<_, warp::Rejection>(resp);
+                    Ok(resp)
+                } else {
+                    let resp = warp::reply::json(&TxResp {
+                        tx_id: "rejected".to_string(),
+                        status: "validation_failed",
+                    });
+                    Ok(resp)
                 }
-            };
-
-            // Create ZKTransaction from request
-            let tx = bleep_core::transaction::ZKTransaction {
-                sender: req.sender.clone(),
-                receiver: req.receiver.clone(),
-                amount: req.amount,
-                timestamp: req.timestamp,
-                signature: req.signature,
-            };
-
-            // Try to add transaction to pool
-            let admitted = pool.add_transaction(tx).await;
-
-            if admitted {
-                let tx_id = format!(
-                    "{}:{}:{}:{}",
-                    req.sender, req.receiver, req.amount, req.timestamp
-                );
-                let resp = warp::reply::json(&TxResp {
-                    tx_id,
-                    status: "accepted",
-                });
-                Ok(resp)
-            } else {
-                let resp = warp::reply::json(&TxResp {
-                    tx_id: "rejected".to_string(),
-                    status: "validation_failed",
-                });
-                Ok(resp)
-            }
-        });
+            },
+        );
 
     // POST /rpc/mint — Temporary endpoint for testing (mint tokens to address)
     let mint = warp::path!("rpc" / "mint")
@@ -498,43 +500,45 @@ pub fn rpc_routes_with_state(
         .and(warp::body::json::<MintReq>())
         .and(auth_filter(Arc::clone(&state_inner)))
         .and(with_rpc_state(rpc.clone()))
-        .and_then(|req: MintReq, _claims: SessionClaims, st: RpcState| async move {
-            // Check if StateManager is attached
-            let state_mgr = match st.state_mgr {
-                Some(sm) => sm,
-                None => {
-                    let resp = warp::reply::json(&MintResp {
-                        address: req.address.clone(),
-                        new_balance: "0".to_string(),
-                        status: "StateManager not attached to RPC state".to_string(),
-                    });
-                    return Ok::<_, warp::Rejection>(resp);
-                }
-            };
+        .and_then(
+            |req: MintReq, _claims: SessionClaims, st: RpcState| async move {
+                // Check if StateManager is attached
+                let state_mgr = match st.state_mgr {
+                    Some(sm) => sm,
+                    None => {
+                        let resp = warp::reply::json(&MintResp {
+                            address: req.address.clone(),
+                            new_balance: "0".to_string(),
+                            status: "StateManager not attached to RPC state".to_string(),
+                        });
+                        return Ok::<_, warp::Rejection>(resp);
+                    }
+                };
 
-            // Mint tokens (convert u64 to u128)
-            let amount_u128 = req.amount as u128;
-            let mint_result = state_mgr.lock().mint(&req.address, amount_u128);
+                // Mint tokens (convert u64 to u128)
+                let amount_u128 = req.amount as u128;
+                let mint_result = state_mgr.lock().mint(&req.address, amount_u128);
 
-            match mint_result {
-                Ok(new_balance) => {
-                    let resp = warp::reply::json(&MintResp {
-                        address: req.address,
-                        new_balance: new_balance.to_string(),
-                        status: "minted".to_string(),
-                    });
-                    Ok(resp)
+                match mint_result {
+                    Ok(new_balance) => {
+                        let resp = warp::reply::json(&MintResp {
+                            address: req.address,
+                            new_balance: new_balance.to_string(),
+                            status: "minted".to_string(),
+                        });
+                        Ok(resp)
+                    }
+                    Err(err) => {
+                        let resp = warp::reply::json(&MintResp {
+                            address: req.address,
+                            new_balance: "0".to_string(),
+                            status: err,
+                        });
+                        Ok(resp)
+                    }
                 }
-                Err(err) => {
-                    let resp = warp::reply::json(&MintResp {
-                        address: req.address,
-                        new_balance: "0".to_string(),
-                        status: err,
-                    });
-                    Ok(resp)
-                }
-            }
-        });
+            },
+        );
 
     // GET /rpc/tx/history
     let tx_history = warp::path!("rpc" / "tx" / "history")
@@ -545,10 +549,12 @@ pub fn rpc_routes_with_state(
                 let txs = pool.get_transactions().await;
                 let tx_ids: Vec<String> = txs
                     .into_iter()
-                    .map(|tx| format!(
-                        "{}:{}:{}:{}",
-                        tx.sender, tx.receiver, tx.amount, tx.timestamp
-                    ))
+                    .map(|tx| {
+                        format!(
+                            "{}:{}:{}:{}",
+                            tx.sender, tx.receiver, tx.amount, tx.timestamp
+                        )
+                    })
                     .collect();
                 Ok::<_, warp::Rejection>(warp::reply::json(&tx_ids))
             } else {
@@ -652,7 +658,8 @@ pub fn rpc_routes_with_state(
         .and(warp::body::json::<StakeRequest>())
         .and(auth_filter(Arc::clone(&state_inner)))
         .and(with_rpc_state(rpc.clone()))
-        .and_then(|req: StakeRequest, _claims: SessionClaims, st: RpcState| async move {
+        .and_then(
+            |req: StakeRequest, _claims: SessionClaims, st: RpcState| async move {
                 if req.tx_type.trim().to_lowercase() != "stake" {
                     let resp = warp::reply::with_status(
                         warp::reply::json(&ErrResp {
@@ -732,7 +739,8 @@ pub fn rpc_routes_with_state(
                         }
                     }
                 }
-            });
+            },
+        );
 
     // POST /rpc/validator/unstake
     let validator_unstake = warp::path!("rpc" / "validator" / "unstake")
@@ -740,7 +748,8 @@ pub fn rpc_routes_with_state(
         .and(warp::body::json::<UnstakeRequest>())
         .and(auth_filter(Arc::clone(&state_inner)))
         .and(with_rpc_state(rpc.clone()))
-        .and_then(|req: UnstakeRequest, _claims: SessionClaims, st: RpcState| async move {
+        .and_then(
+            |req: UnstakeRequest, _claims: SessionClaims, st: RpcState| async move {
                 match &st.validator_registry {
                     None => {
                         let resp = warp::reply::with_status(
@@ -771,7 +780,8 @@ pub fn rpc_routes_with_state(
                         }
                     }
                 }
-            });
+            },
+        );
 
     // GET /rpc/validator/list
     let validator_list = warp::path!("rpc" / "validator" / "list")
@@ -842,7 +852,10 @@ pub fn rpc_routes_with_state(
         .and(auth_filter(Arc::clone(&state_inner)))
         .and(with_rpc_state(rpc.clone()))
         .map(
-            |body: bytes::Bytes, _claims: SessionClaims, st: RpcState| -> Box<dyn warp::Reply + Send> {
+            |body: bytes::Bytes,
+             _claims: SessionClaims,
+             st: RpcState|
+             -> Box<dyn warp::Reply + Send> {
                 // Deserialize the SlashingEvidence JSON
                 let evidence: SlashingEvidence = match serde_json::from_slice(&body) {
                     Ok(e) => e,
@@ -1080,15 +1093,21 @@ fn auth_filter(
         .and(with_arc_state(Arc::clone(&state)))
         .and_then(|auth_header: String, st: Arc<RpcState>| async move {
             if !auth_header.starts_with("Bearer ") {
-                return Err(warp::reject::custom(AuthRejection(AuthError::InvalidSession)));
+                return Err(warp::reject::custom(AuthRejection(
+                    AuthError::InvalidSession,
+                )));
             }
             let token = &auth_header[7..];
             let auth_service = st.auth_service.as_ref().ok_or_else(|| {
-                warp::reject::custom(AuthRejection(AuthError::Unauthorized("Auth service not available".to_string())))
+                warp::reject::custom(AuthRejection(AuthError::Unauthorized(
+                    "Auth service not available".to_string(),
+                )))
             })?;
-            let claims = auth_service.sessions.validate(token).await.map_err(|e| {
-                warp::reject::custom(AuthRejection(e))
-            })?;
+            let claims = auth_service
+                .sessions
+                .validate(token)
+                .await
+                .map_err(|e| warp::reject::custom(AuthRejection(e)))?;
             Ok(claims)
         })
 }
@@ -1250,41 +1269,43 @@ fn oracle_update(
         .and(warp::body::json::<OracleUpdateReq>())
         .and(auth_filter(Arc::clone(&state)))
         .and(with_arc_state(state))
-        .map(|req: OracleUpdateReq, _claims: SessionClaims, st: Arc<RpcState>| {
-            match &st.economics_runtime {
-                Some(rt) => {
-                    let operator_bytes = hex::decode(&req.operator_id).unwrap_or_default();
-                    let update = PriceUpdate {
-                        source: OracleSource::Custom(operator_bytes.clone()),
-                        asset: req.asset.clone(),
-                        price: req.price,
-                        timestamp: req.timestamp,
-                        confidence_bps: req.confidence_bps,
-                        operator_id: operator_bytes,
-                        signature: vec![0u8; 64], // Signature verification Sprint 9
-                    };
-                    let mut rt = rt.lock();
-                    match rt.submit_price_update(update) {
-                        Ok(_) => warp::reply::with_status(
-                            warp::reply::json(&OracleUpdateResp { ok: true }),
-                            warp::http::StatusCode::OK,
-                        ),
-                        Err(e) => warp::reply::with_status(
-                            warp::reply::json(&ErrResp {
-                                error: e.to_string(),
-                            }),
-                            warp::http::StatusCode::BAD_REQUEST,
-                        ),
+        .map(
+            |req: OracleUpdateReq, _claims: SessionClaims, st: Arc<RpcState>| {
+                match &st.economics_runtime {
+                    Some(rt) => {
+                        let operator_bytes = hex::decode(&req.operator_id).unwrap_or_default();
+                        let update = PriceUpdate {
+                            source: OracleSource::Custom(operator_bytes.clone()),
+                            asset: req.asset.clone(),
+                            price: req.price,
+                            timestamp: req.timestamp,
+                            confidence_bps: req.confidence_bps,
+                            operator_id: operator_bytes,
+                            signature: vec![0u8; 64], // Signature verification Sprint 9
+                        };
+                        let mut rt = rt.lock();
+                        match rt.submit_price_update(update) {
+                            Ok(_) => warp::reply::with_status(
+                                warp::reply::json(&OracleUpdateResp { ok: true }),
+                                warp::http::StatusCode::OK,
+                            ),
+                            Err(e) => warp::reply::with_status(
+                                warp::reply::json(&ErrResp {
+                                    error: e.to_string(),
+                                }),
+                                warp::http::StatusCode::BAD_REQUEST,
+                            ),
+                        }
                     }
+                    None => warp::reply::with_status(
+                        warp::reply::json(&ErrResp {
+                            error: "EconomicsRuntime not initialised".into(),
+                        }),
+                        warp::http::StatusCode::SERVICE_UNAVAILABLE,
+                    ),
                 }
-                None => warp::reply::with_status(
-                    warp::reply::json(&ErrResp {
-                        error: "EconomicsRuntime not initialised".into(),
-                    }),
-                    warp::http::StatusCode::SERVICE_UNAVAILABLE,
-                ),
-            }
-        })
+            },
+        )
 }
 
 // ── GET /rpc/connect/intents/pending ──────────────────────────────────────────
@@ -1347,105 +1368,107 @@ fn connect_submit_intent(
         .and(warp::body::json::<SubmitIntentReq>())
         .and(auth_filter(Arc::clone(&state)))
         .and(with_arc_state(state))
-        .map(|req: SubmitIntentReq, _claims: SessionClaims, st: Arc<RpcState>| {
-            use bleep_interop::types::{
-                AssetId, AssetType, ChainId, InstantIntent, UniversalAddress,
-            };
-            use sha2::{Digest, Sha256};
+        .map(
+            |req: SubmitIntentReq, _claims: SessionClaims, st: Arc<RpcState>| {
+                use bleep_interop::types::{
+                    AssetId, AssetType, ChainId, InstantIntent, UniversalAddress,
+                };
+                use sha2::{Digest, Sha256};
 
-            let src = ChainId::from_name(&req.source_chain).unwrap_or(ChainId::BLEEP);
-            let dst = ChainId::from_name(&req.dest_chain).unwrap_or(ChainId::Ethereum);
+                let src = ChainId::from_name(&req.source_chain).unwrap_or(ChainId::BLEEP);
+                let dst = ChainId::from_name(&req.dest_chain).unwrap_or(ChainId::Ethereum);
 
-            let ts = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
+                let ts = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
 
-            // Deterministic intent ID from (source_chain, dest_chain, source_amount, sender, nonce)
-            let nonce = req.nonce.unwrap_or(ts);
-            let mut h = Sha256::new();
-            h.update(req.source_chain.as_bytes());
-            h.update(req.dest_chain.as_bytes());
-            h.update(req.source_amount.to_le_bytes());
-            h.update(req.sender_address.as_bytes());
-            h.update(nonce.to_le_bytes());
-            let id_arr: [u8; 32] = h.finalize().into();
+                // Deterministic intent ID from (source_chain, dest_chain, source_amount, sender, nonce)
+                let nonce = req.nonce.unwrap_or(ts);
+                let mut h = Sha256::new();
+                h.update(req.source_chain.as_bytes());
+                h.update(req.dest_chain.as_bytes());
+                h.update(req.source_amount.to_le_bytes());
+                h.update(req.sender_address.as_bytes());
+                h.update(nonce.to_le_bytes());
+                let id_arr: [u8; 32] = h.finalize().into();
 
-            let escrow_proof = req
-                .escrow_proof
-                .as_ref()
-                .and_then(|s| hex::decode(s).ok())
-                .unwrap_or_else(|| vec![1, 2, 3]); // devnet placeholder
-
-            let intent = InstantIntent {
-                intent_id: id_arr,
-                created_at: ts,
-                expires_at: ts + 300,
-                source_chain: src,
-                dest_chain: dst,
-                source_asset: AssetId {
-                    chain: src,
-                    contract_address: None,
-                    token_id: None,
-                    asset_type: AssetType::Native,
-                },
-                dest_asset: AssetId {
-                    chain: dst,
-                    contract_address: None,
-                    token_id: None,
-                    asset_type: AssetType::Native,
-                },
-                source_amount: req.source_amount,
-                min_dest_amount: req.min_dest_amount,
-                sender: UniversalAddress::new(src, req.sender_address.clone()),
-                recipient: UniversalAddress::new(dst, req.recipient_address.clone()),
-                max_solver_reward_bps: req.max_solver_reward_bps.unwrap_or(50),
-                slippage_tolerance_bps: req.slippage_tolerance_bps.unwrap_or(100),
-                nonce,
-                signature: req
-                    .signature
+                let escrow_proof = req
+                    .escrow_proof
                     .as_ref()
                     .and_then(|s| hex::decode(s).ok())
-                    .unwrap_or_else(|| vec![1]),
-                escrow_tx_hash: req
-                    .escrow_tx_hash
-                    .clone()
-                    .unwrap_or_else(|| format!("0xescrow-{}", hex::encode(&id_arr[..4]))),
-                escrow_proof,
-            };
+                    .unwrap_or_else(|| vec![1, 2, 3]); // devnet placeholder
 
-            let intent_id_hex = hex::encode(id_arr);
+                let intent = InstantIntent {
+                    intent_id: id_arr,
+                    created_at: ts,
+                    expires_at: ts + 300,
+                    source_chain: src,
+                    dest_chain: dst,
+                    source_asset: AssetId {
+                        chain: src,
+                        contract_address: None,
+                        token_id: None,
+                        asset_type: AssetType::Native,
+                    },
+                    dest_asset: AssetId {
+                        chain: dst,
+                        contract_address: None,
+                        token_id: None,
+                        asset_type: AssetType::Native,
+                    },
+                    source_amount: req.source_amount,
+                    min_dest_amount: req.min_dest_amount,
+                    sender: UniversalAddress::new(src, req.sender_address.clone()),
+                    recipient: UniversalAddress::new(dst, req.recipient_address.clone()),
+                    max_solver_reward_bps: req.max_solver_reward_bps.unwrap_or(50),
+                    slippage_tolerance_bps: req.slippage_tolerance_bps.unwrap_or(100),
+                    nonce,
+                    signature: req
+                        .signature
+                        .as_ref()
+                        .and_then(|s| hex::decode(s).ok())
+                        .unwrap_or_else(|| vec![1]),
+                    escrow_tx_hash: req
+                        .escrow_tx_hash
+                        .clone()
+                        .unwrap_or_else(|| format!("0xescrow-{}", hex::encode(&id_arr[..4]))),
+                    escrow_proof,
+                };
 
-            match &st.connect_orchestrator {
-                Some(orc) => {
-                    // Submit to live intent pool asynchronously
-                    let orc2 = Arc::clone(orc);
-                    let intent2 = intent.clone();
-                    tokio::spawn(async move {
-                        if let Err(e) = orc2.submit_intent(intent2).await {
-                            tracing::warn!("Intent submit error: {}", e);
-                        }
-                    });
-                    warp::reply::with_status(
-                        warp::reply::json(&SubmitIntentResp {
-                            intent_id: intent_id_hex,
-                            status: "AuctionOpen".to_string(),
-                        }),
-                        warp::http::StatusCode::CREATED,
-                    )
+                let intent_id_hex = hex::encode(id_arr);
+
+                match &st.connect_orchestrator {
+                    Some(orc) => {
+                        // Submit to live intent pool asynchronously
+                        let orc2 = Arc::clone(orc);
+                        let intent2 = intent.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = orc2.submit_intent(intent2).await {
+                                tracing::warn!("Intent submit error: {}", e);
+                            }
+                        });
+                        warp::reply::with_status(
+                            warp::reply::json(&SubmitIntentResp {
+                                intent_id: intent_id_hex,
+                                status: "AuctionOpen".to_string(),
+                            }),
+                            warp::http::StatusCode::CREATED,
+                        )
+                    }
+                    None => {
+                        // Stub mode: return accepted status without live pool
+                        warp::reply::with_status(
+                            warp::reply::json(&SubmitIntentResp {
+                                intent_id: intent_id_hex,
+                                status: "Pending".to_string(),
+                            }),
+                            warp::http::StatusCode::CREATED,
+                        )
+                    }
                 }
-                None => {
-                    // Stub mode: return accepted status without live pool
-                    warp::reply::with_status(
-                        warp::reply::json(&SubmitIntentResp {
-                            intent_id: intent_id_hex,
-                            status: "Pending".to_string(),
-                        }),
-                        warp::http::StatusCode::CREATED,
-                    )
-                }
-            }
-        })
+            },
+        )
 }
 
 // ── GET /rpc/connect/intent/{id} ──────────────────────────────────────────────
@@ -1859,59 +1882,61 @@ fn pat_transfer(
         .and(warp::body::json::<PatTransferReq>())
         .and(auth_filter(Arc::clone(&state)))
         .and(with_arc_state(state))
-        .map(|req: PatTransferReq, _claims: SessionClaims, st: Arc<RpcState>| {
-            match &st.pat_registry {
-                None => return pat_not_initialised(),
-                Some(reg) => {
-                    let from = match hex_to_address(&req.from) {
-                        Ok(a) => a,
-                        Err(e) => {
-                            return warp::reply::with_status(
-                                warp::reply::json(&ErrResp { error: e }),
-                                warp::http::StatusCode::BAD_REQUEST,
-                            )
-                        }
-                    };
-                    let to = match hex_to_address(&req.to) {
-                        Ok(a) => a,
-                        Err(e) => {
-                            return warp::reply::with_status(
-                                warp::reply::json(&ErrResp { error: e }),
-                                warp::http::StatusCode::BAD_REQUEST,
-                            )
-                        }
-                    };
-                    let amount: u128 = req.amount.parse().unwrap_or(0);
-                    // Pre-calculate burn for the response body
-                    let burn_deducted = reg
-                        .lock()
-                        .get_token(&req.symbol)
-                        .map(|t| t.transfer_burn_amount(amount))
-                        .unwrap_or(0);
-                    let intent =
-                        bleep_pat::PATIntent::transfer(from, req.symbol.clone(), to, amount);
-                    let mut r = reg.lock();
-                    match r.execute(&intent) {
-                        Ok(outcome) => {
-                            let received = outcome.return_value.unwrap_or(0);
-                            warp::reply::with_status(
-                                warp::reply::json(&PatTransferResp {
-                                    received: received.to_string(),
-                                    burn_deducted: burn_deducted.to_string(),
+        .map(
+            |req: PatTransferReq, _claims: SessionClaims, st: Arc<RpcState>| {
+                match &st.pat_registry {
+                    None => return pat_not_initialised(),
+                    Some(reg) => {
+                        let from = match hex_to_address(&req.from) {
+                            Ok(a) => a,
+                            Err(e) => {
+                                return warp::reply::with_status(
+                                    warp::reply::json(&ErrResp { error: e }),
+                                    warp::http::StatusCode::BAD_REQUEST,
+                                )
+                            }
+                        };
+                        let to = match hex_to_address(&req.to) {
+                            Ok(a) => a,
+                            Err(e) => {
+                                return warp::reply::with_status(
+                                    warp::reply::json(&ErrResp { error: e }),
+                                    warp::http::StatusCode::BAD_REQUEST,
+                                )
+                            }
+                        };
+                        let amount: u128 = req.amount.parse().unwrap_or(0);
+                        // Pre-calculate burn for the response body
+                        let burn_deducted = reg
+                            .lock()
+                            .get_token(&req.symbol)
+                            .map(|t| t.transfer_burn_amount(amount))
+                            .unwrap_or(0);
+                        let intent =
+                            bleep_pat::PATIntent::transfer(from, req.symbol.clone(), to, amount);
+                        let mut r = reg.lock();
+                        match r.execute(&intent) {
+                            Ok(outcome) => {
+                                let received = outcome.return_value.unwrap_or(0);
+                                warp::reply::with_status(
+                                    warp::reply::json(&PatTransferResp {
+                                        received: received.to_string(),
+                                        burn_deducted: burn_deducted.to_string(),
+                                    }),
+                                    warp::http::StatusCode::OK,
+                                )
+                            }
+                            Err(e) => warp::reply::with_status(
+                                warp::reply::json(&ErrResp {
+                                    error: e.to_string(),
                                 }),
-                                warp::http::StatusCode::OK,
-                            )
+                                warp::http::StatusCode::BAD_REQUEST,
+                            ),
                         }
-                        Err(e) => warp::reply::with_status(
-                            warp::reply::json(&ErrResp {
-                                error: e.to_string(),
-                            }),
-                            warp::http::StatusCode::BAD_REQUEST,
-                        ),
                     }
                 }
-            }
-        })
+            },
+        )
 }
 
 // ── GET /rpc/pat/balance/{symbol}/{address} ───────────────────────────────────
@@ -2184,7 +2209,9 @@ fn pat_set_burn_rate(
         .and(auth_filter(Arc::clone(&state)))
         .and(with_arc_state(state))
         .map(
-            |req: PatSetBurnRateReq, _claims: SessionClaims, st: Arc<RpcState>| match &st.pat_registry {
+            |req: PatSetBurnRateReq, _claims: SessionClaims, st: Arc<RpcState>| match &st
+                .pat_registry
+            {
                 None => return pat_not_initialised(),
                 Some(reg) => {
                     let owner = match hex_to_address(&req.owner) {
@@ -2248,7 +2275,8 @@ fn pat_set_owner(
         .and(auth_filter(Arc::clone(&state)))
         .and(with_arc_state(state))
         .map(
-            |req: PatSetOwnerReq, _claims: SessionClaims, st: Arc<RpcState>| match &st.pat_registry {
+            |req: PatSetOwnerReq, _claims: SessionClaims, st: Arc<RpcState>| match &st.pat_registry
+            {
                 None => return pat_not_initialised(),
                 Some(reg) => {
                     let owner = match hex_to_address(&req.owner) {
@@ -2514,56 +2542,58 @@ fn auth_register_operator(
         .and(warp::post())
         .and(warp::body::json::<AuthRegisterOperatorReq>())
         .and(with_arc_state(state))
-        .and_then(|req: AuthRegisterOperatorReq, st: Arc<RpcState>| async move {
-            let auth_service = match &st.auth_service {
-                Some(svc) => Arc::clone(svc),
-                None => {
-                    return Ok::<_, warp::Rejection>(warp::reply::with_status(
-                        warp::reply::json(&ErrResp {
-                            error: "Auth service not mounted in RPC state.".into(),
-                        }),
-                        warp::http::StatusCode::INTERNAL_SERVER_ERROR,
-                    ));
-                }
-            };
+        .and_then(
+            |req: AuthRegisterOperatorReq, st: Arc<RpcState>| async move {
+                let auth_service = match &st.auth_service {
+                    Some(svc) => Arc::clone(svc),
+                    None => {
+                        return Ok::<_, warp::Rejection>(warp::reply::with_status(
+                            warp::reply::json(&ErrResp {
+                                error: "Auth service not mounted in RPC state.".into(),
+                            }),
+                            warp::http::StatusCode::INTERNAL_SERVER_ERROR,
+                        ));
+                    }
+                };
 
-            let kyber_public_key = match base64::decode(&req.kyber_public_key_b64) {
-                Ok(bytes) => bytes,
-                Err(e) => {
-                    return Ok(warp::reply::with_status(
+                let kyber_public_key = match base64::decode(&req.kyber_public_key_b64) {
+                    Ok(bytes) => bytes,
+                    Err(e) => {
+                        return Ok(warp::reply::with_status(
+                            warp::reply::json(&ErrResp {
+                                error: format!("Invalid kyber_public_key base64: {}", e),
+                            }),
+                            warp::http::StatusCode::BAD_REQUEST,
+                        ));
+                    }
+                };
+
+                match auth_service
+                    .register_operator(
+                        req.operator_handle,
+                        req.display_name,
+                        req.password,
+                        kyber_public_key,
+                    )
+                    .await
+                {
+                    Ok((_identity, token)) => Ok(warp::reply::with_status(
+                        warp::reply::json(&AuthTokenResp {
+                            token: token.token,
+                            jti: token.jti,
+                            expires_at: token.expires_at.to_rfc3339(),
+                        }),
+                        warp::http::StatusCode::CREATED,
+                    )),
+                    Err(err) => Ok(warp::reply::with_status(
                         warp::reply::json(&ErrResp {
-                            error: format!("Invalid kyber_public_key base64: {}", e),
+                            error: format!("Auth registration failed: {}", err),
                         }),
                         warp::http::StatusCode::BAD_REQUEST,
-                    ));
+                    )),
                 }
-            };
-
-            match auth_service
-                .register_operator(
-                    req.operator_handle,
-                    req.display_name,
-                    req.password,
-                    kyber_public_key,
-                )
-                .await
-            {
-                Ok((_identity, token)) => Ok(warp::reply::with_status(
-                    warp::reply::json(&AuthTokenResp {
-                        token: token.token,
-                        jti: token.jti,
-                        expires_at: token.expires_at.to_rfc3339(),
-                    }),
-                    warp::http::StatusCode::CREATED,
-                )),
-                Err(err) => Ok(warp::reply::with_status(
-                    warp::reply::json(&ErrResp {
-                        error: format!("Auth registration failed: {}", err),
-                    }),
-                    warp::http::StatusCode::BAD_REQUEST,
-                )),
-            }
-        })
+            },
+        )
 }
 
 fn auth_register_dapp(
@@ -2587,11 +2617,7 @@ fn auth_register_dapp(
             };
 
             match auth_service
-                .register_dapp(
-                    req.developer_handle,
-                    req.display_name,
-                    req.password,
-                )
+                .register_dapp(req.developer_handle, req.display_name, req.password)
                 .await
             {
                 Ok((_identity, token)) => Ok(warp::reply::with_status(
@@ -2659,34 +2685,36 @@ fn auth_logout(
         .and(warp::body::json::<AuthLogoutReq>())
         .and(auth_filter(Arc::clone(&state)))
         .and(with_arc_state(state))
-        .and_then(|req: AuthLogoutReq, _claims: SessionClaims, st: Arc<RpcState>| async move {
-            let auth_service = match &st.auth_service {
-                Some(svc) => Arc::clone(svc),
-                None => {
-                    return Ok::<_, warp::Rejection>(warp::reply::with_status(
-                        warp::reply::json(&ErrResp {
-                            error: "Auth service not mounted in RPC state.".into(),
-                        }),
-                        warp::http::StatusCode::INTERNAL_SERVER_ERROR,
-                    ));
-                }
-            };
+        .and_then(
+            |req: AuthLogoutReq, _claims: SessionClaims, st: Arc<RpcState>| async move {
+                let auth_service = match &st.auth_service {
+                    Some(svc) => Arc::clone(svc),
+                    None => {
+                        return Ok::<_, warp::Rejection>(warp::reply::with_status(
+                            warp::reply::json(&ErrResp {
+                                error: "Auth service not mounted in RPC state.".into(),
+                            }),
+                            warp::http::StatusCode::INTERNAL_SERVER_ERROR,
+                        ));
+                    }
+                };
 
-            match auth_service.logout(&req.token).await {
-                Ok(_) => Ok(warp::reply::with_status(
-                    warp::reply::json(&JsonReply {
-                        result: "logout succeeded".into(),
-                    }),
-                    warp::http::StatusCode::OK,
-                )),
-                Err(err) => Ok(warp::reply::with_status(
-                    warp::reply::json(&ErrResp {
-                        error: format!("Logout failed: {}", err),
-                    }),
-                    warp::http::StatusCode::BAD_REQUEST,
-                )),
-            }
-        })
+                match auth_service.logout(&req.token).await {
+                    Ok(_) => Ok(warp::reply::with_status(
+                        warp::reply::json(&JsonReply {
+                            result: "logout succeeded".into(),
+                        }),
+                        warp::http::StatusCode::OK,
+                    )),
+                    Err(err) => Ok(warp::reply::with_status(
+                        warp::reply::json(&ErrResp {
+                            error: format!("Logout failed: {}", err),
+                        }),
+                        warp::http::StatusCode::BAD_REQUEST,
+                    )),
+                }
+            },
+        )
 }
 
 fn auth_rotate_secret(
@@ -2766,81 +2794,84 @@ fn auth_audit_export(
         .and(warp::query::<std::collections::HashMap<String, String>>())
         .and(auth_filter(Arc::clone(&state)))
         .and(with_arc_state(state))
-        .and_then(|params: std::collections::HashMap<String, String>, _claims: SessionClaims, st: Arc<RpcState>| async move {
-            if !st.audit_export_enabled {
-                return Ok::<_, warp::Rejection>(Box::new(warp::reply::with_status(
-                    warp::reply::json(&ErrResp { error: "Audit export disabled.".into() }),
-                    warp::http::StatusCode::FORBIDDEN,
-                )) as Box<dyn warp::Reply + Send>);
-            }
-
-            let auth_service = match &st.auth_service {
-                Some(svc) => Arc::clone(svc),
-                None => {
-                    return Ok(Box::new(warp::reply::with_status(
+        .and_then(
+            |params: std::collections::HashMap<String, String>,
+             _claims: SessionClaims,
+             st: Arc<RpcState>| async move {
+                if !st.audit_export_enabled {
+                    return Ok::<_, warp::Rejection>(Box::new(warp::reply::with_status(
                         warp::reply::json(&ErrResp {
-                            error: "Auth service not mounted in RPC state.".into(),
+                            error: "Audit export disabled.".into(),
                         }),
-                        warp::http::StatusCode::INTERNAL_SERVER_ERROR,
-                    )) as Box<dyn warp::Reply + Send>);
+                        warp::http::StatusCode::FORBIDDEN,
+                    ))
+                        as Box<dyn warp::Reply + Send>);
                 }
-            };
 
-            let limit: Option<usize> = params.get("limit").and_then(|v| v.parse().ok());
-            let audit = auth_service.audit.read().await;
+                let auth_service = match &st.auth_service {
+                    Some(svc) => Arc::clone(svc),
+                    None => {
+                        return Ok(Box::new(warp::reply::with_status(
+                            warp::reply::json(&ErrResp {
+                                error: "Auth service not mounted in RPC state.".into(),
+                            }),
+                            warp::http::StatusCode::INTERNAL_SERVER_ERROR,
+                        )) as Box<dyn warp::Reply + Send>);
+                    }
+                };
 
-            let ndjson = if let Some(limit) = limit {
-                let entries: Vec<&bleep_auth::AuditEntry> = audit
-                    .entries()
-                    .iter()
-                    .rev()
-                    .take(limit)
-                    .collect::<Vec<_>>()
-                    .into_iter()
-                    .rev()
-                    .collect();
+                let limit: Option<usize> = params.get("limit").and_then(|v| v.parse().ok());
+                let audit = auth_service.audit.read().await;
 
-                let mut out = String::new();
-                for (seq, entry) in entries.iter().enumerate() {
-                    let line = serde_json::json!({
-                        "seq": seq,
-                        "entry_hash": entry.entry_hash,
-                        "prev_hash": entry.prev_hash,
-                        "event": {
-                            "kind": format!("{:?}", entry.event.kind),
-                            "actor_id": entry.event.actor_id,
-                            "resource": entry.event.resource,
-                            "action": entry.event.action,
-                            "outcome": entry.event.outcome,
-                            "details": entry.event.details,
-                            "timestamp": entry.event.timestamp.to_rfc3339(),
-                        },
+                let ndjson = if let Some(limit) = limit {
+                    let entries: Vec<&bleep_auth::AuditEntry> = audit
+                        .entries()
+                        .iter()
+                        .rev()
+                        .take(limit)
+                        .collect::<Vec<_>>()
+                        .into_iter()
+                        .rev()
+                        .collect();
+
+                    let mut out = String::new();
+                    for (seq, entry) in entries.iter().enumerate() {
+                        let line = serde_json::json!({
+                            "seq": seq,
+                            "entry_hash": entry.entry_hash,
+                            "prev_hash": entry.prev_hash,
+                            "event": {
+                                "kind": format!("{:?}", entry.event.kind),
+                                "actor_id": entry.event.actor_id,
+                                "resource": entry.event.resource,
+                                "action": entry.event.action,
+                                "outcome": entry.event.outcome,
+                                "details": entry.event.details,
+                                "timestamp": entry.event.timestamp.to_rfc3339(),
+                            },
+                        });
+                        out.push_str(&line.to_string());
+                        out.push('\n');
+                    }
+                    let meta = serde_json::json!({
+                        "type": "audit_export_meta",
+                        "total": audit.len(),
+                        "chain_tip": audit.head_hash(),
+                        "exported_at": chrono::Utc::now().to_rfc3339(),
                     });
-                    out.push_str(&line.to_string());
+                    out.push_str(&meta.to_string());
                     out.push('\n');
-                }
-                let meta = serde_json::json!({
-                    "type": "audit_export_meta",
-                    "total": audit.len(),
-                    "chain_tip": audit.head_hash(),
-                    "exported_at": chrono::Utc::now().to_rfc3339(),
-                });
-                out.push_str(&meta.to_string());
-                out.push('\n');
-                out
-            } else {
-                audit.export_ndjson()
-            };
+                    out
+                } else {
+                    audit.export_ndjson()
+                };
 
-            Ok(Box::new(warp::reply::with_status(
-                warp::reply::with_header(
-                    ndjson,
-                    "Content-Type",
-                    "application/x-ndjson",
-                ),
-                warp::http::StatusCode::OK,
-            )) as Box<dyn warp::Reply + Send>)
-        })
+                Ok(Box::new(warp::reply::with_status(
+                    warp::reply::with_header(ndjson, "Content-Type", "application/x-ndjson"),
+                    warp::http::StatusCode::OK,
+                )) as Box<dyn warp::Reply + Send>)
+            },
+        )
 }
 
 // ── GET /explorer ─────────────────────────────────────────────────────────────
@@ -2993,8 +3024,8 @@ bleep_jwt_rotations_total {jwt_rot}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bleep_core::blockchain::{Blockchain, BlockchainState as CoreBlockchainState};
     use bleep_core::block::Block;
+    use bleep_core::blockchain::{Blockchain, BlockchainState as CoreBlockchainState};
     use bleep_core::transaction::ZKTransaction;
     use bleep_core::transaction_pool::TransactionPool;
     use bleep_crypto::tx_signer::{generate_tx_keypair, sign_tx_payload, tx_payload};
@@ -3040,7 +3071,10 @@ mod tests {
 
         let tx_ids: Vec<String> = serde_json::from_slice(resp.body()).expect("valid JSON");
         assert_eq!(tx_ids.len(), 1);
-        assert_eq!(tx_ids[0], format!("{}:{}:{}:{}", sender, receiver, amount, timestamp));
+        assert_eq!(
+            tx_ids[0],
+            format!("{}:{}:{}:{}", sender, receiver, amount, timestamp)
+        );
     }
 
     #[tokio::test]
@@ -3347,9 +3381,8 @@ mod tests_sprint8 {
 
     #[test]
     fn auth_service_can_be_attached_to_rpc_state() {
-        let auth = Arc::new(
-            AuthService::new(b"abcdefghijklmnopqrstuvwxyz012345".to_vec()).unwrap(),
-        );
+        let auth =
+            Arc::new(AuthService::new(b"abcdefghijklmnopqrstuvwxyz012345".to_vec()).unwrap());
         let st = Arc::new(RpcState::new().with_auth_service(Arc::clone(&auth)));
         assert!(st.auth_service.is_some());
     }

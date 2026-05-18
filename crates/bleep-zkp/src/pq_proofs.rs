@@ -10,11 +10,11 @@
 //!   4. Verification: replay constraints, verify Merkle paths, check SPHINCS+ sig
 
 use bincode;
+use bleep_crypto::tx_signer::{sign_tx_payload, verify_tx_signature};
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Sha3_256};
 use std::collections::BTreeMap;
 use tracing::{debug, info, warn};
-use bleep_crypto::tx_signer::{sign_tx_payload, verify_tx_signature};
 
 // =================================================================================================
 // PROOF TYPES
@@ -483,15 +483,8 @@ mod tests {
     #[test]
     fn test_block_validity_proof_generation() {
         let (_pk, sk) = generate_tx_keypair();
-        let proof = BlockValidityProof::prove(
-            1,
-            0,
-            3,
-            &[0xAAu8; 31],
-            &[0xBBu8; 31],
-            &[0xCCu8; 32],
-            &sk,
-        );
+        let proof =
+            BlockValidityProof::prove(1, 0, 3, &[0xAAu8; 31], &[0xBBu8; 31], &[0xCCu8; 32], &sk);
 
         assert!(proof.is_ok());
         let proof = proof.unwrap();
@@ -502,16 +495,9 @@ mod tests {
     #[test]
     fn test_block_validity_proof_verification() {
         let (pk, sk) = generate_tx_keypair();
-        let proof = BlockValidityProof::prove(
-            1,
-            0,
-            3,
-            &[0xAAu8; 31],
-            &[0xBBu8; 31],
-            &[0xCCu8; 32],
-            &sk,
-        )
-        .unwrap();
+        let proof =
+            BlockValidityProof::prove(1, 0, 3, &[0xAAu8; 31], &[0xBBu8; 31], &[0xCCu8; 32], &sk)
+                .unwrap();
 
         let result = BlockValidityProof::verify(&proof, 1, 0, 3, &[0xAAu8; 31], &[0xBBu8; 31], &pk);
 

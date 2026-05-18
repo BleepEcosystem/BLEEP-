@@ -79,8 +79,8 @@ use bleep_consensus::{run_consensus_engine, BlockProducer};
 use bleep_scheduler::{BlockTick, Scheduler};
 
 // ── Governance ────────────────────────────────────────────────────────────────
-use bleep_governance::governance_core::GovernanceEngine;
 use bleep_auth::AuthService;
+use bleep_governance::governance_core::GovernanceEngine;
 
 // ── P2P ───────────────────────────────────────────────────────────────────────
 use bleep_core::block_validation::BlockValidator;
@@ -108,8 +108,8 @@ use bleep_telemetry::{
 };
 
 // ── RPC ───────────────────────────────────────────────────────────────────────
+use base64::{engine::general_purpose, Engine as _};
 use bleep_rpc::{rpc_routes_with_state, RpcState};
-use base64::{Engine as _, engine::general_purpose};
 use hex;
 use warp;
 
@@ -470,20 +470,16 @@ async fn run() -> Result<(), Box<dyn Error>> {
             }
         },
         Err(_) => {
-            warn!(
-                "BLEEP_JWT_SECRET not set. Using default dev secret for this runtime."
-            );
+            warn!("BLEEP_JWT_SECRET not set. Using default dev secret for this runtime.");
             general_purpose::STANDARD
                 .decode(DEFAULT_BLEEP_JWT_SECRET_B64)
                 .expect("default JWT secret is valid base64")
         }
     };
-    let auth_service = Arc::new(
-        AuthService::new(jwt_secret).unwrap_or_else(|e| {
-            error!("Failed to initialize AuthService: {}", e);
-            std::process::exit(1);
-        }),
-    );
+    let auth_service = Arc::new(AuthService::new(jwt_secret).unwrap_or_else(|e| {
+        error!("Failed to initialize AuthService: {}", e);
+        std::process::exit(1);
+    }));
 
     // Build live RpcState — wires the live StateManager for /rpc/state and
     // /rpc/proof, and shares the same atomic counters with the relay task so

@@ -276,14 +276,23 @@ mod tests {
 
     #[tokio::test]
     async fn garbage_token_rejected() {
-        assert_eq!(mgr().validate("not.a.jwt").await, Err(AuthError::InvalidSession));
+        assert_eq!(
+            mgr().validate("not.a.jwt").await,
+            Err(AuthError::InvalidSession)
+        );
     }
 
     #[tokio::test]
     async fn wrong_secret_rejected() {
         let m1 = mgr();
         let m2 = SessionManager::new(b"completely-different-secret-here".to_vec()).unwrap();
-        let tok = m1.issue("u", &[], chrono::Duration::hours(1)).await.unwrap();
-        assert_eq!(m2.validate(&tok.token).await, Err(AuthError::InvalidSession));
+        let tok = m1
+            .issue("u", &[], chrono::Duration::hours(1))
+            .await
+            .unwrap();
+        assert_eq!(
+            m2.validate(&tok.token).await,
+            Err(AuthError::InvalidSession)
+        );
     }
 }

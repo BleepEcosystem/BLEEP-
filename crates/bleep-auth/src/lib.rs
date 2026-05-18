@@ -91,11 +91,14 @@ impl AuthService {
             .store_password(&identity.id, password)?;
         self.rbac.assign_role(&identity.id, Role::NodeOperator);
 
-        let token = self.sessions.issue(
-            &identity.id,
-            &[Role::NodeOperator],
-            chrono::Duration::hours(8),
-        ).await?;
+        let token = self
+            .sessions
+            .issue(
+                &identity.id,
+                &[Role::NodeOperator],
+                chrono::Duration::hours(8),
+            )
+            .await?;
 
         self.audit.write().await.record(AuditEvent {
             kind: AuditEventKind::Registration,
@@ -131,11 +134,14 @@ impl AuthService {
             .store_password(&identity.id, password)?;
         self.rbac.assign_role(&identity.id, Role::DappDeveloper);
 
-        let token = self.sessions.issue(
-            &identity.id,
-            &[Role::DappDeveloper],
-            chrono::Duration::hours(8),
-        ).await?;
+        let token = self
+            .sessions
+            .issue(
+                &identity.id,
+                &[Role::DappDeveloper],
+                chrono::Duration::hours(8),
+            )
+            .await?;
 
         self.audit.write().await.record(AuditEvent {
             kind: AuditEventKind::Registration,
@@ -163,7 +169,8 @@ impl AuthService {
         let roles = self.rbac.get_roles(identity_id);
         let token = self
             .sessions
-            .issue(identity_id, &roles, chrono::Duration::hours(8)).await?;
+            .issue(identity_id, &roles, chrono::Duration::hours(8))
+            .await?;
 
         self.audit.write().await.record(AuditEvent {
             kind: AuditEventKind::Login,

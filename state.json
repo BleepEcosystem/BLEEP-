@@ -1,0 +1,103 @@
+{
+  "config": {
+    "voting_period_blocks": 1000,
+    "quorum_bps": 1000,
+    "threshold_bps": 6667,
+    "veto_threshold_bps": 3333,
+    "min_deposit": 1000000000000,
+    "total_staked": 70000000000000000
+  },
+  "proposals": {
+    "1": {
+      "id": 1,
+      "proposer": "alice",
+      "title": "Simple proposal",
+      "description": "Demo governance flow",
+      "param_change": null,
+      "deposit": 1000000000000,
+      "state": "Rejected",
+      "yes_votes": 1000000000000,
+      "no_votes": 0,
+      "abstain_votes": 0,
+      "veto_votes": 0,
+      "voters": {
+        "bob": "Yes"
+      },
+      "created_at_block": 1000,
+      "voting_end_block": 2000,
+      "execution_tx": null
+    },
+    "2": {
+      "id": 2,
+      "proposer": "bob",
+      "title": "Second proposal",
+      "description": "Try quorum",
+      "param_change": null,
+      "deposit": 1000000000000,
+      "state": "Executed",
+      "yes_votes": 7000000000000000,
+      "no_votes": 0,
+      "abstain_votes": 0,
+      "veto_votes": 0,
+      "voters": {
+        "charlie": "Yes"
+      },
+      "created_at_block": 1000,
+      "voting_end_block": 2000,
+      "execution_tx": "0x0000000000000000000000000000000000000000000000003c6ef09afe94f82a"
+    }
+  },
+  "event_log": [
+    {
+      "block": 1000,
+      "kind": "proposal_submitted",
+      "proposal": 1,
+      "actor": "alice",
+      "detail": "title='Simple proposal' deposit=1000000000000"
+    },
+    {
+      "block": 1000,
+      "kind": "vote_cast",
+      "proposal": 1,
+      "actor": "bob",
+      "detail": "vote=Yes power=1000000000000"
+    },
+    {
+      "block": 1000,
+      "kind": "proposal_rejected_quorum",
+      "proposal": 1,
+      "actor": "governance",
+      "detail": "total_votes=1000000000000 < quorum=7000000000000000"
+    },
+    {
+      "block": 1000,
+      "kind": "proposal_submitted",
+      "proposal": 2,
+      "actor": "bob",
+      "detail": "title='Second proposal' deposit=1000000000000"
+    },
+    {
+      "block": 1000,
+      "kind": "vote_cast",
+      "proposal": 2,
+      "actor": "charlie",
+      "detail": "vote=Yes power=7000000000000000"
+    },
+    {
+      "block": 1000,
+      "kind": "proposal_passed",
+      "proposal": 2,
+      "actor": "governance",
+      "detail": "yes=7000000000000000 > threshold=4666900000000000"
+    },
+    {
+      "block": 1000,
+      "kind": "proposal_executed",
+      "proposal": 2,
+      "actor": "governance",
+      "detail": "tx=0x0000000000000000000000000000000000000000000000003c6ef09afe94f82a param=None"
+    }
+  ],
+  "next_id": 3,
+  "current_block": 1000
+}

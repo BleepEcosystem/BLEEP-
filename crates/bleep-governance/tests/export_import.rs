@@ -1,4 +1,6 @@
-use bleep_governance::live_governance::{GovernableParam, GovernanceConfig, LiveGovernanceEngine, Vote};
+use bleep_governance::live_governance::{
+    GovernableParam, GovernanceConfig, LiveGovernanceEngine, Vote,
+};
 
 #[test]
 fn export_import_state_roundtrip() {
@@ -28,6 +30,9 @@ fn export_import_state_roundtrip() {
     let p2 = eng2.proposal(pid).expect("imported proposal");
 
     assert_eq!(p1.title, p2.title);
-    assert_eq!(p1.param_change.as_ref().map(|p| p.name()), p2.param_change.as_ref().map(|p| p.name()));
+    assert_eq!(
+        p1.param_change.as_ref().map(|p| p.name()),
+        p2.param_change.as_ref().map(|p| p.name())
+    );
     assert_eq!(p1.yes_votes, p2.yes_votes);
 }
