@@ -5,7 +5,7 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-pqcrypto-kyber = "0.8.0"
+pqcrypto-kyber = "0.8.1"
 pqcrypto-sphincsplus = "0.7"
 pqcrypto-traits      = "0.3"
 ed25519-dalek        = "2.1.1"
