@@ -33,7 +33,7 @@ sha3          = "0.10"
 blake3        = "1.5"
 pqcrypto-kyber       = "0.7"
 pqcrypto-sphincsplus = "0.7"
-bincode       = "1.3"
+bincode = "1.3"
 
 rand_core             = "0.6"
 

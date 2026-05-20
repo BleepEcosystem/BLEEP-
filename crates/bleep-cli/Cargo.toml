@@ -11,7 +11,7 @@ tokio              = { version = "1.36", features = ["full"] }
 serde              = { version = "1.0", features = ["derive"] }
 serde_json         = "1.0"
 tracing            = "0.1.40"
-tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 anyhow             = "1.0.80"
 clap               = { version = "4.5.1", features = ["derive"] }
 
