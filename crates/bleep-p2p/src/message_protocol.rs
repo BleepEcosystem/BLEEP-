@@ -12,6 +12,7 @@ use std::time::Duration;
 
 use bytes::{BufMut, Bytes, BytesMut};
 use dashmap::DashMap;
+use socket2;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, Mutex};
@@ -306,8 +307,40 @@ impl MessageProtocol {
 
     /// Accept incoming connections on `bind_addr` and dispatch to the inbound channel.
     pub async fn listen(self: Arc<Self>, bind_addr: SocketAddr) -> P2PResult<()> {
-        let listener = TcpListener::bind(bind_addr).await.map_err(P2PError::Io)?;
-        info!(addr = %bind_addr, "MessageProtocol listening");
+        // Production-grade: use socket2 to enable SO_REUSEADDR for graceful restarts
+        let socket = socket2::Socket::new(
+            socket2::Domain::for_address(bind_addr),
+            socket2::Type::STREAM,
+            None,
+        )
+        .map_err(|e| P2PError::Io(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            format!("socket2::Socket::new failed: {}", e),
+        )))?;
+        
+        socket.set_reuse_address(true)
+            .map_err(|e| P2PError::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("SO_REUSEADDR failed: {}", e),
+            )))?;
+        
+        socket.bind(&bind_addr.into())
+            .map_err(|e| P2PError::Io(std::io::Error::new(
+                std::io::ErrorKind::AddrInUse,
+                format!("socket bind failed: {}", e),
+            )))?;
+        
+        socket.listen(128)
+            .map_err(|e| P2PError::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("socket listen failed: {}", e),
+            )))?;
+        
+        let listener = TcpListener::from_std(
+            std::net::TcpListener::from(socket)
+        ).map_err(P2PError::Io)?;
+        
+        info!(addr = %bind_addr, "MessageProtocol listening (SO_REUSEADDR enabled)");
 
         loop {
             match listener.accept().await {
