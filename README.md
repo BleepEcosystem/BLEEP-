@@ -16,7 +16,10 @@
 
 BLEEP is a distributed execution protocol built on three invariants: every block ships with a cryptographic proof of its own correctness, every instruction is expressed as intent rather than bytecode, and the entire cryptographic foundation survives a quantum computer — by construction, from genesis.
 Every block produced by BLEEP includes a Winterfell STARK proof of its own validity — generated before broadcast, verified independently by every validator, requiring no trusted setup and no privileged operator. Transaction signing, peer authentication, key encapsulation, and zero-knowledge proof verification are each secured exclusively by NIST-finalised post-quantum standards — FIPS 205 (SPHINCS+) and FIPS 203 (Kyber-1024/ML-KEM-1024) — at Security Level 5.
+
+
 BLEEP is post-quantum from genesis. There is no classical fallback. There is no migration path needed — because the problem was solved before the protocol accumulated economic value and ecosystem dependencies.
+
 
 | The harvest-now, decrypt-later threat is real and accumulating. Every signed transaction on a classically secured blockchain is a permanent public record. An adversary can archive those records today and apply quantum decryption retroactively when capable hardware arrives. BLEEP's historical record carries no such liability — by design.|
 
@@ -33,7 +36,7 @@ BLEEP is post-quantum from genesis. There is no classical fallback. There is no 
 
 ## How BLEEP Compares
 
-| Property | Bitcoin / Ethereum | Naoris Protocol | BLEEP |
+| Property | Non-PQ chains | Naoris Protocol | BLEEP |
 |---|---|---|---|
 | Transaction signing | ECDSA — broken by Shor's | Dilithium-5 overlay | SPHINCS+-SHAKE-256f (FIPS 205, SL5) — native |
 | Key encapsulation | ECDH / x25519 — broken by Shor's | Additive layer | Kyber-1024 / ML-KEM-1024 (FIPS 203, SL5) — native |
