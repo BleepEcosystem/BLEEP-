@@ -22,20 +22,10 @@ Muhammad Attahir · May 2026
 
 ## Abstract
 
-Existing decentralized systems derive their security from cryptographic assumptions — integer factorization hardness, discrete logarithm intractability, and elliptic-curve group structure — that are broken in polynomial time by Shor's algorithm on a sufficiently capable fault-tolerant quantum processor. Every transaction record on such a system constitutes a long-lived liability: an adversary may archive signed transactions and public keys today and apply quantum decryption retroactively when hardware of sufficient scale becomes available.
-
-This paper presents **BLEEP**, a Quantum Trust Network: the first distributed execution protocol in which every block ships with a mathematical proof of its own correctness, every instruction is expressed as intent, and the entire cryptographic foundation survives a quantum computer — by construction, from genesis.
-
-BLEEP enforces transaction validity, node identity, network message authentication, and zero-knowledge proof verification using NIST-finalized post-quantum primitives at Security Level 5. Block validity proofs and cross-chain bridge proofs use Winterfell STARK proofs — transparent, hash-based constructions requiring no trusted setup ceremony. At Protocol Version 5, the prover and verifier are wired to BlockValidityProver and BlockValidityVerifier, benchmarked against the 3,000 ms slot budget, and covered by a 72-hour adversarial test suite.
-
-Four properties distinguish BLEEP from every existing Layer 1:
-
-- Proven execution: every block proposal includes a Winterfell STARK validity proof before broadcast.
-- Intent-native runtime: a 6-layer PAT engine and 7-tier VM router resolve caller-declared outcomes to optimal execution paths.
-- Quantum-native foundation: SPHINCS+-SHAKE-256f-simple (FIPS 205) and Kyber-1024/ML-KEM-1024 (FIPS 203) are the only primitives on sensitive paths — not a retrofit, the original design.
-- Constitutional integrity: maximum supply, inflation ceiling, finality threshold, and fee burn floor are enforced by Rust const_assert! and cannot be altered by any actor.
-
-
+Every existing distributed execution protocol accepts block validity on the basis of validator consensus — not mathematical proof. When a block is finalised, it is finalised because a supermajority of validators signed it, not because any party has independently verified that its state transition is correct. Simultaneously, the cryptographic foundations of these systems — ECDSA, secp256k1, x25519 — are vulnerable to polynomial-time attack by Shor's algorithm on a sufficiently capable fault-tolerant quantum processor, exposing their historical transaction records to retroactive decryption by adversaries archiving signed data today.
+This paper describes BLEEP, a distributed execution environment investigating both problems in a single implementation. Every block produced by BLEEP carries a Winterfell STARK validity proof — a hash-based, transparent, post-quantum secure construction requiring no trusted setup ceremony — generated before broadcast and independently verified by each validator before any vote is cast. Block correctness is not assumed from consensus; it is proven. Transaction signing, peer authentication, key encapsulation, and proof verification are secured exclusively by NIST-finalized post-quantum primitives: SPHINCS+-SHAKE-256f-simple (FIPS 205, Security Level 5) and Kyber-1024/ML-KEM-1024 (FIPS 203, Security Level 5). No classical public-key primitive is present on any sensitive path. No migration is required — because no classical primitive was introduced.
+Protocol Version 5 presents the following empirical measurements from a live implementation: Winterfell STARK block validity proofs averaging ~850 ms generation and ~12 ms verification on reference hardware (8-core, 32 GB RAM) within a 3,000 ms slot budget; SPHINCS+ signatures of 49,856 bytes per transaction, producing approximately 204 MB of aggregate signature data per 4,096-transaction block; an internal security audit resolving all Critical and High findings across 16,127 lines of Rust; and a 72-hour adversarial test suite across 10 scenarios with all passing.
+These measurements are empirical data on the practical overhead of combining STARK-based execution proofs with NIST-finalized post-quantum primitives in a live distributed system — constraints directly relevant to Ethereum's long-term trajectory toward provable execution and post-quantum migration.
 ---
 
 ## 1. Introduction
