@@ -1,42 +1,60 @@
-# BLEEP VM v0.5 — 7-Layer Intent-Driven Universal Execution Engine
+# bleep-vm
 
-## Architecture Overview
+**7-Tier Intent-Driven Universal Execution Engine — BLEEP Quantum Trust Network**
+
+`bleep-vm` is the execution heart of BLEEP. Every computation is expressed as an **intent** — a typed declaration of desired outcome — which the VM router resolves to the optimal execution engine automatically. The VM never writes state directly; all mutations are produced as `StateDiff` objects committed atomically by `bleep-state`.
+
+**Licence:** BSL-1.1 — converts automatically to Apache 2.0 on **2028-07-13**.
+
+---
+
+## Design Principles
+
+- **Intent over instruction.** Callers declare *what* they want. The router determines *how* it executes.
+- **Engine isolation.** A bug in the EVM cannot affect WASM. A bug in WASM cannot affect the STARK engine.
+- **State safety.** The VM never writes to state directly — it produces a `StateDiff` that `bleep-state` commits atomically.
+- **Determinism.** Identical intent + identical state = identical output on every honest node. No filesystem, no network, no randomness in the sandbox.
+- **DoS resistance.** A unified gas model normalises costs across all VMs — preventing attackers from exploiting cheaper engines for denial-of-service.
+
+---
+
+## Architecture — 7-Tier Dispatch
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│  Layer 1 — Intent Layer                                             │
+│  Tier 1 — Intent Layer                                              │
 │                                                                     │
 │  TransferIntent | ContractCallIntent | DeployIntent                 │
 │  CrossChainIntent | ZkVerifyIntent                                  │
 │                                                                     │
 │  Everything is an intent. No raw bytecode at the API surface.       │
 ├─────────────────────────────────────────────────────────────────────┤
-│  Layer 2 — VM Router (vm_router.rs)                                 │
+│  Tier 2 — VM Router (vm_router.rs)                                  │
 │                                                                     │
-│  • Verifies Ed25519 signatures                                      │
+│  • SPHINCS+ signature verification on all external intents          │
 │  • Detects VM type from magic bytes (Auto mode)                     │
 │  • Enforces per-intent gas caps (default: 30M gas)                  │
 │  • Circuit-breaker per engine (5 failures → 30s backoff)            │
 │  • Per-chain VM overrides (e.g. Ethereum → always EVM)              │
-│  • Routing metrics (total intents, success/fail, gas)               │
+│  • Routing metrics (total intents, success/fail, gas used)          │
 ├─────────────────────────────────────────────────────────────────────┤
-│  Layer 3 — Execution Engines (completely isolated)                  │
+│  Tier 3 — Execution Engines (completely isolated)                   │
 │                                                                     │
-│  EvmEngine    — revm (Foundry's EVM, Berlin/London/Shanghai)       │
+│  EvmEngine    — revm (Berlin/London/Shanghai EVM)                  │
 │  WasmEngine   — Wasmer 4.2 + Cranelift JIT                         │
 │  ZkEngine     — Groth16 on BN254 (ark-groth16)                     │
 │                                                                     │
 │  Bug in EVM cannot affect WASM. Bug in WASM cannot affect ZK.      │
 ├─────────────────────────────────────────────────────────────────────┤
-│  Layer 4 — Deterministic Execution Sandbox (sandbox.rs)             │
+│  Tier 4 — Deterministic Execution Sandbox (sandbox.rs)              │
 │                                                                     │
 │  • Bytecode validation before deployment                            │
-│  • Memory limits (max 256 WASM pages = 16MB)                       │
-│  • Call stack depth limit (1024 frames)                             │
+│  • Memory limits (max 256 WASM pages = 16 MB)                      │
+│  • Call stack depth limit (1,024 frames)                            │
 │  • Host API whitelist (storage, events, crypto, BLEEP Connect)      │
-│  • No filesystem, no network, no random — deterministic execution   │
+│  • No filesystem, no network, no randomness — deterministic         │
 ├─────────────────────────────────────────────────────────────────────┤
-│  Layer 5 — State Transition (state_transition.rs)                   │
+│  Tier 5 — State Transition (state_transition.rs)                    │
 │                                                                     │
 │  VM NEVER writes state directly.                                    │
 │                                                                     │
@@ -46,68 +64,62 @@
 │  + commitment_hash() for validator signatures                       │
 │  + simulate() for dry-run without commitment                        │
 ├─────────────────────────────────────────────────────────────────────┤
-│  Layer 6 — Unified Gas Model (gas_model.rs)                         │
+│  Tier 6 — Unified Gas Model (gas_model.rs)                          │
 │                                                                     │
 │  All VMs emit native gas. GasModel normalises to BLEEP gas.        │
 │                                                                     │
-│  EVM:  1 BLEEP gas = 1.0 EVM gas (baseline)                        │
-│  WASM: 1 BLEEP gas = 2.5 WASM gas (instructions cheaper)           │
-│  SBF:  1 BLEEP gas = 3.0 SBF  gas (Solana very cheap)              │
-│  Move: 1 BLEEP gas = 2.0 Move gas                                  │
-│  ZK:   1 BLEEP gas = 0.1 ZK   gas (proofs expensive)               │
+│  EVM:  1 BLEEP gas = 1.0 EVM gas   (baseline)                      │
+│  WASM: 1 BLEEP gas = 2.5 WASM gas  (instructions cheaper)          │
+│  ZK:   1 BLEEP gas = 0.1 ZK gas    (proofs expensive)              │
 │                                                                     │
-│  Without this, attackers exploit cheaper VMs for DoS.              │
+│  Without normalisation, attackers exploit cheaper VMs for DoS.     │
 ├─────────────────────────────────────────────────────────────────────┤
-│  Layer 7 — Cross-Chain Native Execution (native_bridge.rs)          │
+│  Tier 7 — Cross-Chain Execution (native_bridge.rs)                  │
 │                                                                     │
 │  Contracts call other chains natively:                              │
 │  bleep_call(chain="ethereum", contract=0xABC, data=...)            │
 │                                                                     │
-│  Supported: Ethereum, Solana, Cosmos, Polkadot, Near, Sui, Aptos   │
-│  Each chain uses its native ABI encoding automatically.             │
-│  Routes through BLEEP Connect (Kyber-768 KEM + SPHINCS+ signatures)│
+│  Routes through BLEEP Connect (Kyber-1024 KEM + SPHINCS+ sigs)     │
+│  Supported: Ethereum, BSC, Solana, Cosmos, Polkadot                │
 └─────────────────────────────────────────────────────────────────────┘
 ```
+
+---
 
 ## Crate Structure
 
 ```
 crates/bleep-vm/
 ├── src/
-│   ├── lib.rs                        # Public API + integration tests
-│   ├── intent.rs                     # Layer 1: Intent types + builders
-│   ├── types.rs                      # Shared types (ChainId, Gas, etc.)
-│   ├── error.rs                      # Error hierarchy
-│   │
+│   ├── lib.rs                         # Public API
+│   ├── intent.rs                      # Tier 1: Intent types and builders
+│   ├── types.rs                       # Shared types (ChainId, Gas, TargetVm)
+│   ├── error.rs                       # Error hierarchy
 │   ├── router/
-│   │   └── vm_router.rs              # Layer 2: VmRouter + Engine trait
-│   │
+│   │   └── vm_router.rs               # Tier 2: VmRouter and Engine trait
 │   ├── engines/
-│   │   ├── evm_engine.rs             # Layer 3: revm EVM (100% compatible)
-│   │   ├── wasm_engine_adapter.rs    # Layer 3: Wasmer WASM
-│   │   ├── zk_engine_adapter.rs      # Layer 3: Groth16 ZK verifier
-│   │   ├── wasm_engine.rs            # Full WASM runtime (v4)
-│   │   └── zk_engine.rs              # ZK proof utilities (v4)
-│   │
+│   │   ├── evm_engine.rs              # Tier 3: revm EVM (Berlin/London/Shanghai)
+│   │   ├── wasm_engine.rs             # Tier 3: Wasmer 4.2 + Cranelift JIT
+│   │   └── zk_engine.rs               # Tier 3: Groth16 ZK verifier
 │   ├── runtime/
-│   │   ├── gas_model.rs              # Layer 6: Unified gas normalisation
-│   │   ├── sandbox.rs                # Layer 4: Bytecode validation
-│   │   └── memory.rs                 # Memory pool + limits
-│   │
+│   │   ├── gas_model.rs               # Tier 6: Unified gas normalisation
+│   │   ├── sandbox.rs                 # Tier 4: Bytecode validation and limits
+│   │   └── memory.rs                  # Memory pool and limits
 │   ├── execution/
-│   │   ├── executor.rs               # Top-level orchestrator (all 7 layers)
-│   │   ├── execution_context.rs      # Block/tx env + gas accounting state
-│   │   ├── call_stack.rs             # Layer 4: Call depth + frame tracking
-│   │   └── state_transition.rs       # Layer 5: StateDiff + StateTransition
-│   │
+│   │   ├── executor.rs                # Top-level orchestrator (all 7 tiers)
+│   │   ├── execution_context.rs       # Block/tx environment and gas accounting
+│   │   ├── call_stack.rs              # Tier 4: Call depth and frame tracking
+│   │   └── state_transition.rs        # Tier 5: StateDiff and StateTransition
 │   └── crosschain/
-│       ├── native_bridge.rs          # Layer 7: Cross-chain execution
-│       └── connect_bridge.rs         # BLEEP Connect ABI bridges (v4)
+│       ├── native_bridge.rs           # Tier 7: Cross-chain execution
+│       └── connect_bridge.rs          # BLEEP Connect ABI bridges
 ```
+
+---
 
 ## Quick Start
 
-### Transfer
+### BLEEP Transfer
 
 ```rust
 use bleep_vm::{Executor, ExecutorConfig, Intent, IntentKind, TransferIntent};
@@ -117,16 +129,16 @@ let executor = Executor::production(ExecutorConfig::default());
 
 let intent = Intent::new_unsigned(
     IntentKind::Transfer(TransferIntent {
-        from:   [1u8; 32],
-        to:     [2u8; 32],
-        amount: 1_000_000,
+        from:   sender_address,
+        to:     recipient_address,
+        amount: 1_000_000,          // microBLEEP
         memo:   Some("payment".into()),
     }),
     ChainId::Bleep,
 );
 
 let outcome = executor.execute(&intent).await?;
-println!("Gas used: {} BLEEP gas", outcome.bleep_gas);
+println!("Gas used: {}", outcome.bleep_gas);
 println!("State diff: {:?}", outcome.state_diff());
 ```
 
@@ -136,13 +148,12 @@ println!("State diff: {:?}", outcome.state_diff());
 use bleep_vm::{ContractCallBuilder, TargetVm};
 
 let intent = Intent::new_unsigned(
-    ContractCallBuilder::new([0xABu8; 32])  // contract address
+    ContractCallBuilder::new(contract_address)
         .vm(TargetVm::Evm)
         .calldata(abi_encode("transfer", &[recipient, amount]))
         .gas(300_000)
-        .value(0)
         .build(),
-    ChainId::Ethereum,
+    ChainId::Bleep,
 );
 
 let outcome = executor.execute(&intent).await?;
@@ -159,18 +170,20 @@ let intent = Intent::new_unsigned(
     DeployBuilder::new(bytecode)
         .vm(TargetVm::Wasm)
         .gas(2_000_000)
-        .salt([0x42u8; 32])  // deterministic address
+        .salt([0x42u8; 32])         // deterministic address derivation
         .build(),
     ChainId::Bleep,
 );
 
 let outcome = executor.execute(&intent).await?;
-let contract_address = outcome.output(); // 32-byte address
+let contract_address = outcome.output();
 ```
 
-### Native Cross-Chain Call
+### Cross-Chain Intent (Tier 7)
 
 ```rust
+use bleep_vm::{IntentKind, CrossChainIntent};
+
 let intent = Intent::new_unsigned(
     IntentKind::CrossChain(CrossChainIntent {
         destination_chain: ChainId::Ethereum,
@@ -179,15 +192,14 @@ let intent = Intent::new_unsigned(
         source_gas_limit:  100_000,
         dest_gas_limit:    300_000,
         bridge_value:      0,
-        relay_fee:         1_000_000,   // pay BLEEP Connect relayers
+        relay_fee:         1_000_000,
         require_zk_proof:  false,
     }),
     ChainId::Bleep,
 );
-
-let outcome = executor.execute(&intent).await?;
-let message_id = outcome.output(); // track on BLEEP Connect
 ```
+
+Routes through BLEEP Connect Tier 4 (instant) or Tier 3 (ZK proof) depending on `require_zk_proof`.
 
 ### ZK Proof Verification
 
@@ -203,7 +215,11 @@ let intent = Intent::new_unsigned(
 );
 ```
 
-## Adding a New Engine
+---
+
+## Adding a New Execution Engine
+
+The `Engine` trait is the extension point for new VM backends:
 
 ```rust
 use bleep_vm::router::vm_router::{Engine, EngineResult};
@@ -213,41 +229,70 @@ struct CairoEngine;
 #[async_trait]
 impl Engine for CairoEngine {
     fn name(&self) -> &'static str { "cairo-vm" }
+
     fn supports(&self, vm: &TargetVm) -> bool {
-        matches!(vm, TargetVm::Cairo) // add Cairo to TargetVm enum
+        matches!(vm, TargetVm::Cairo)
     }
-    async fn execute(&self, ctx, bytecode, calldata, gas) -> VmResult<EngineResult> {
-        // ... Cairo execution ...
+
+    async fn execute(
+        &self, ctx: &ExecutionContext,
+        bytecode: &[u8], calldata: &[u8], gas: u64,
+    ) -> VmResult<EngineResult> {
+        // Cairo execution implementation
+        todo!()
     }
-    async fn deploy(&self, ...) -> VmResult<EngineResult> { ... }
 }
 
-// Register:
+// Register at startup — no fork required
 executor.router.register_engine(Arc::new(CairoEngine));
 ```
+
+---
 
 ## Security Properties
 
 | Property | Mechanism |
 |---|---|
-| VM Isolation | Each engine is a separate type; no shared mutable state |
-| Deterministic execution | No system calls, no randomness, same bytecode = same result |
-| Clean state management | VM outputs `StateDiff` only; bleep-state does atomic commit |
-| Cross-chain security | BLEEP Connect: Kyber-768 KEM + SPHINCS+ + ZK proofs |
-| DoS prevention | Unified gas model prevents cheap-VM exploitation |
-| Upgradability | New engines registered dynamically; no fork required |
-| Signature verification | Ed25519 on every intent (skippable for trusted internal calls) |
+| Intent authentication | SPHINCS+ signature verification on all external intents (Tier 2) |
+| Engine isolation | Each engine is a separate Rust type with no shared mutable state |
+| Deterministic execution | No syscalls, no randomness, same bytecode + same state = same result |
+| State safety | VM outputs `StateDiff` only — `bleep-state` performs atomic commit |
+| Memory safety | WASM: max 256 pages (16 MB); call stack: 1,024 frames |
+| Cross-chain security | BLEEP Connect: Kyber-1024 KEM + SPHINCS+ signatures (PQ-secure) |
+| DoS prevention | Unified gas normalisation prevents cheap-VM exploitation |
 | Bytecode validation | Sandbox validator runs before any deployment |
 
-## What BLEEP VM Supports
+---
 
-| Feature | Status |
-|---|---|
-| Solidity / Vyper contracts (EVM) | ✅ revm — 100% compatible |
-| Rust WASM contracts | ✅ Wasmer 4.2 + Cranelift |
-| ZK contracts (Groth16) | ✅ ark-groth16 on BN254 |
-| Cross-chain native calls | ✅ BLEEP Connect (7 chains) |
-| Intent execution | ✅ All 5 intent types |
-| Move VM (Sui/Aptos) | 🔜 v0.6 |
-| Cairo VM (StarkNet) | 🔜 v0.7 |
-| AI VM | 🔜 Future |
+## Engine Status
+
+| Engine | Status | Implementation |
+|---|---|---|
+| Solidity / Vyper (EVM) | ✅ Live | revm — Berlin/London/Shanghai compatible |
+| WASM | ✅ Live | Wasmer 4.2 + Cranelift JIT |
+| ZK (Groth16) | ✅ Live | ark-groth16 on BN254 |
+| STARK (Winterfell) | ✅ Live | Block validity proofs via `bleep-zkp` |
+| Cross-chain (BLEEP Connect) | ✅ Live | Tiers 3 and 4 on Ethereum Sepolia |
+| Move VM | 🔲 Planned (Phase 8) | — |
+| zkEVM | 🔲 Planned (Phase 8) | — |
+
+---
+
+## Licence Note
+
+`bleep-vm` is licenced under **BSL-1.1**. Commercial use in production requires a separate licence until **2028-07-13**, on which date the licence automatically converts to Apache 2.0. Non-production use (development, testing, research) is permitted without restriction.
+
+See `crates/bleep-vm/LICENSE` for full terms.
+
+---
+
+## Testing
+
+```bash
+cargo test -p bleep-vm
+```
+
+---
+
+*Part of the [BLEEP Quantum Trust Network](https://github.com/BleepEcosystem/BLEEP-v1) · Protocol Version 5*
+*© 2026 Muhammad Attahir — BSL-1.1 (Apache 2.0 from 2028-07-13)*
