@@ -1,6 +1,6 @@
 # bleep-core
 
-**Core Protocol Types, Transactions & Invariant Enforcement â€” BLEEP Quantum Trust Network**
+**Core Protocol Types, Transactions & Invariant Enforcement — BLEEP Quantum Trust Network**
 
 `bleep-core` is the foundational crate of the BLEEP blockchain. It defines block and transaction structures, the mempool, protocol invariant enforcement, and the async bridge that connects the mempool to the consensus block producer. All other crates depend on `bleep-core`; `bleep-core` depends on nothing else in the workspace.
 
@@ -9,7 +9,7 @@
 ## License
 
 Licensed under **Apache 2.0**.
-Copyright Â© 2026 Muhammad Attahir.
+Copyright © 2026 Muhammad Attahir.
 
 ---
 
@@ -17,23 +17,23 @@ Copyright Â© 2026 Muhammad Attahir.
 
 ```
 bleep-core
-â”œâ”€â”€ block                  â€” Block struct, hash computation, genesis configuration
-â”œâ”€â”€ block_validation       â€” Structural and cryptographic block validation rules
-â”œâ”€â”€ blockchain             â€” In-memory chain ledger
-â”œâ”€â”€ transaction            â€” ZKTransaction: SPHINCS+-signed transaction type
-â”œâ”€â”€ transaction_manager    â€” Lifecycle: creation â†’ validation â†’ broadcast
-â”œâ”€â”€ transaction_pool       â€” Fee-priority mempool pool
-â”œâ”€â”€ mempool                â€” DashMap-backed in-memory mempool
-â”œâ”€â”€ mempool_bridge         â€” Async bridge: mempool â†’ consensus block producer
-â”œâ”€â”€ state                  â€” Lightweight account state mirror (balances, nonces)
-â”œâ”€â”€ networking             â€” Core P2P message dispatch
-â”œâ”€â”€ proof_of_identity      â€” ZKP-based identity proof primitives
-â”œâ”€â”€ anti_asset_loss        â€” Asset recovery request lifecycle
-â”œâ”€â”€ protocol_invariants    â€” Declarative invariant definitions
-â”œâ”€â”€ invariant_enforcement  â€” Runtime invariant assertion engine
-â”œâ”€â”€ decision_attestation   â€” Attested on-chain decisions (signed outcomes)
-â”œâ”€â”€ decision_verification  â€” Verification of attested decisions
-â””â”€â”€ tests                  â€” Unit test suite
+├── block                  — Block struct, hash computation, genesis configuration
+├── block_validation       — Structural and cryptographic block validation rules
+├── blockchain             — In-memory chain ledger
+├── transaction            — ZKTransaction: SPHINCS+-signed transaction type
+├── transaction_manager    — Lifecycle: creation → validation → broadcast
+├── transaction_pool       — Fee-priority mempool pool
+├── mempool                — DashMap-backed in-memory mempool
+├── mempool_bridge         — Async bridge: mempool → consensus block producer
+├── state                  — Lightweight account state mirror (balances, nonces)
+├── networking             — Core P2P message dispatch
+├── proof_of_identity      — ZKP-based identity proof primitives
+├── anti_asset_loss        — Asset recovery request lifecycle
+├── protocol_invariants    — Declarative invariant definitions
+├── invariant_enforcement  — Runtime invariant assertion engine
+├── decision_attestation   — Attested on-chain decisions (signed outcomes)
+├── decision_verification  — Verification of attested decisions
+└── tests                  — Unit test suite
 ```
 
 ---
@@ -42,7 +42,7 @@ bleep-core
 
 ### `ZKTransaction`
 
-All BLEEP transactions are `ZKTransaction` â€” SPHINCS+-signed payloads carrying:
+All BLEEP transactions are `ZKTransaction` — SPHINCS+-signed payloads carrying:
 
 ```rust
 struct ZKTransaction {
@@ -51,7 +51,7 @@ struct ZKTransaction {
     amount:      u128,          // microBLEEP
     nonce:       u64,           // anti-replay counter
     gas_limit:   u64,
-    signature:   Vec<u8>,       // SPHINCS+-SHAKE-256f-simple â€” 7,856 bytes
+    signature:   Vec<u8>,       // SPHINCS+-SHAKE-256f-simple — 7,856 bytes
     zk_aux:      Option<Vec<u8>>, // optional ZK auxiliary data (recovery, privacy)
 }
 ```
@@ -85,7 +85,7 @@ Both `stark_proof` and `signature` are required for a block to be accepted by an
 |---|---|
 | Supply conservation | `total_minted - total_burned == circulating + locked` |
 | Nonce monotonicity | Account nonce increases by exactly 1 per transaction |
-| No negative balances | All balance deltas must leave balances â‰¥ 0 |
+| No negative balances | All balance deltas must leave balances ≥ 0 |
 | Block hash continuity | `block.prev_hash == hash(previous_block)` |
 | ZK proof inclusion | Asset recovery requests must include a valid ZKP |
 
@@ -126,5 +126,5 @@ cargo test -p bleep-core
 
 ---
 
-*Part of the [BLEEP Quantum Trust Network](https://github.com/BleepEcosystem/BLEEP-v1) Â· Protocol Version 5*
-*Â© 2026 Muhammad Attahir â€” Apache 2.0 Licence*
+*Part of the [BLEEP Quantum Trust Network](https://github.com/BleepEcosystem/BLEEP-v1) · Protocol Version 5*
+*© 2026 Muhammad Attahir — Apache 2.0 Licence*
