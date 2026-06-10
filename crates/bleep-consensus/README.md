@@ -1,15 +1,15 @@
 # bleep-consensus
 
-**Post-Quantum BFT Consensus Engine â€” BLEEP Quantum Trust Network**
+**Post-Quantum BFT Consensus Engine — BLEEP Quantum Trust Network**
 
-`bleep-consensus` implements BLEEP's multi-mode proof-of-stake Byzantine fault-tolerant consensus. It produces SPHINCS+-signed blocks with embedded Winterfell STARK validity proofs, manages epoch transitions, enforces deterministic slashing, and coordinates across 10 shards â€” all under a strict safety-over-liveliness design principle.
+`bleep-consensus` implements BLEEP's multi-mode proof-of-stake Byzantine fault-tolerant consensus. It produces SPHINCS+-signed blocks with embedded Winterfell STARK validity proofs, manages epoch transitions, enforces deterministic slashing, and coordinates across 10 shards — all under a strict safety-over-liveliness design principle.
 
 ---
 
 ## License
 
 Licensed under **Apache 2.0**.
-Copyright Â© 2026 Muhammad Attahir.
+Copyright © 2026 Muhammad Attahir.
 
 ---
 
@@ -17,38 +17,38 @@ Copyright Â© 2026 Muhammad Attahir.
 
 ```
 bleep-consensus
-â”œâ”€â”€ consensus              â€” BLEEPAdaptiveConsensus, ConsensusMode, Validator
-â”œâ”€â”€ engine                 â€” ConsensusEngine trait, ConsensusError, ConsensusMetrics
-â”œâ”€â”€ pos_engine             â€” PoS-Normal: primary mode, stake-proportional proposer selection
-â”œâ”€â”€ pbft_engine            â€” PBFT: emergency mode, reduced validator set
-â”œâ”€â”€ pow_engine             â€” PoW: fallback mode, censorship-resistant
-â”œâ”€â”€ orchestrator           â€” ConsensusOrchestrator: mode selection and delegation
-â”œâ”€â”€ block_producer         â€” Block assembly, STARK proof generation, SPHINCS+ signing, broadcast
-â”œâ”€â”€ epoch                  â€” EpochConfig, EpochState, epoch transition logic
-â”œâ”€â”€ finality               â€” FinalityManager: irreversible finalisation at >6,667 bps stake
-â”œâ”€â”€ slashing_engine        â€” SlashingEngine: double-sign, equivocation, downtime penalties
-â”œâ”€â”€ ai_adaptive_logic      â€” linfa k-NN consensus mode predictor
-â”œâ”€â”€ ai_advisory            â€” AI advisory hooks (non-blocking, advisory only)
-â”œâ”€â”€ gossip_bridge          â€” Async bridge from consensus to bleep-p2p
-â”œâ”€â”€ shard_coordinator      â€” Cross-shard transaction routing during consensus
-â”œâ”€â”€ recovery_controller    â€” Recovery mode re-anchor after partition
-â”œâ”€â”€ safety_invariants      â€” Protocol safety invariant assertions
-â”œâ”€â”€ incident_detector      â€” Anomaly and incident classification
-â”œâ”€â”€ self_healing_orchestrator â€” Consensus-layer fault recovery
-â”œâ”€â”€ chaos_engine           â€” ChaosEngine: fault injection for adversarial testing
-â”œâ”€â”€ performance_bench      â€” TPS benchmarking (TARGET_TPS, BENCHMARK_DURATION_SECS)
-â””â”€â”€ security_audit         â€” On-demand AuditReport generation
+├── consensus              — BLEEPAdaptiveConsensus, ConsensusMode, Validator
+├── engine                 — ConsensusEngine trait, ConsensusError, ConsensusMetrics
+├── pos_engine             — PoS-Normal: primary mode, stake-proportional proposer selection
+├── pbft_engine            — PBFT: emergency mode, reduced validator set
+├── pow_engine             — PoW: fallback mode, censorship-resistant
+├── orchestrator           — ConsensusOrchestrator: mode selection and delegation
+├── block_producer         — Block assembly, STARK proof generation, SPHINCS+ signing, broadcast
+├── epoch                  — EpochConfig, EpochState, epoch transition logic
+├── finality               — FinalityManager: irreversible finalisation at >6,667 bps stake
+├── slashing_engine        — SlashingEngine: double-sign, equivocation, downtime penalties
+├── ai_adaptive_logic      — linfa k-NN consensus mode predictor
+├── ai_advisory            — AI advisory hooks (non-blocking, advisory only)
+├── gossip_bridge          — Async bridge from consensus to bleep-p2p
+├── shard_coordinator      — Cross-shard transaction routing during consensus
+├── recovery_controller    — Recovery mode re-anchor after partition
+├── safety_invariants      — Protocol safety invariant assertions
+├── incident_detector      — Anomaly and incident classification
+├── self_healing_orchestrator — Consensus-layer fault recovery
+├── chaos_engine           — ChaosEngine: fault injection for adversarial testing
+├── performance_bench      — TPS benchmarking (TARGET_TPS, BENCHMARK_DURATION_SECS)
+└── security_audit         — On-demand AuditReport generation
 ```
 
 ---
 
 ## Consensus Modes
 
-Three deterministic modes selected by `ConsensusOrchestrator` based on validator liveness metrics. Mode selection is deterministic â€” identical liveness inputs produce identical mode on all honest nodes.
+Three deterministic modes selected by `ConsensusOrchestrator` based on validator liveness metrics. Mode selection is deterministic — identical liveness inputs produce identical mode on all honest nodes.
 
 | Mode | Trigger Condition | Block Interval | Primary Characteristic |
 |---|---|---|---|
-| **PoS-Normal** | Primary â€” healthy validator set | 3,000 ms | Stake-proportional proposer selection |
+| **PoS-Normal** | Primary — healthy validator set | 3,000 ms | Stake-proportional proposer selection |
 | **Emergency (PBFT)** | <67% validators responsive | 3,000 ms | Reduced validator set, safety-first |
 | **Recovery (PoW)** | Post-partition re-anchor | Variable | Censorship-resistant, deterministic re-sync |
 
@@ -56,7 +56,7 @@ Mode switches are logged, signed, and traceable in the tamper-evident audit log.
 
 ### AI-Adaptive Mode Selection
 
-`ai_adaptive_logic.rs` uses a linfa k-nearest-neighbour model trained on network telemetry to predict optimal mode. It is advisory â€” the final selection is deterministic from validator liveness data, not from model output alone. The model has no authority to override the BFT safety invariant.
+`ai_adaptive_logic.rs` uses a linfa k-nearest-neighbour model trained on network telemetry to predict optimal mode. It is advisory — the final selection is deterministic from validator liveness data, not from model output alone. The model has no authority to override the BFT safety invariant.
 
 ---
 
@@ -65,12 +65,12 @@ Mode switches are logged, signed, and traceable in the tamper-evident audit log.
 Every block produced by `BlockProducer` follows this sequence:
 
 ```
-1. Select up to MAX_TXS_PER_BLOCK (4,096) transactions by fee â€” descending order
+1. Select up to MAX_TXS_PER_BLOCK (4,096) transactions by fee — descending order
 2. Compute Sparse Merkle Trie root over resulting state
 3. Generate Winterfell STARK BlockValidityProof via BlockValidityProver
-   â€” 48-column execution trace, f128 field, FRI backend
-   â€” avg ~850ms on reference hardware (8-core, 32 GB RAM)
-   â€” no trusted setup required
+   — 48-column execution trace, f128 field, FRI backend
+   — avg ~850ms on reference hardware (8-core, 32 GB RAM)
+   — no trusted setup required
 4. Sign completed block with SPHINCS+-SHAKE-256f-simple (FIPS 205, SL5)
 5. Broadcast via bleep-p2p gossip
 ```
@@ -94,7 +94,7 @@ Each epoch (1,000 blocks on mainnet / 100 blocks on testnet):
 
 ## Finality
 
-`FinalityManager` finalises blocks when precommits representing **>6,667 bps (66.67%) of total staked supply** are received. Finalisation is irreversible. Long-range reorgs are rejected regardless of claimed proof-of-work â€” verified in the adversarial test suite at depths of 10 and 50 blocks.
+`FinalityManager` finalises blocks when precommits representing **>6,667 bps (66.67%) of total staked supply** are received. Finalisation is irreversible. Long-range reorgs are rejected regardless of claimed proof-of-work — verified in the adversarial test suite at depths of 10 and 50 blocks.
 
 ---
 
@@ -116,8 +116,8 @@ The following scenarios are covered in the 72-hour adversarial test suite:
 
 | Scenario | Expected Result |
 |---|---|
-| `ValidatorCrash(1)` | Consensus resumed â€” f=1 < n/3 |
-| `ValidatorCrash(2)` | Consensus resumed â€” f=2 < n/3 |
+| `ValidatorCrash(1)` | Consensus resumed — f=1 < n/3 |
+| `ValidatorCrash(2)` | Consensus resumed — f=2 < n/3 |
 | `NetworkPartition(4/3)` | Majority partition continued; healed cleanly |
 | `LongRangeReorg(10)` | Rejected at `FinalityManager` |
 | `LongRangeReorg(50)` | Rejected at `FinalityManager` |
@@ -167,5 +167,5 @@ cargo test -p bleep-consensus bench
 
 ---
 
-*Part of the [BLEEP Quantum Trust Network](https://github.com/BleepEcosystem/BLEEP-v1) Â· Protocol Version 5*
-*Â© 2026 Muhammad Attahir â€” Apache 2.0 Licence*
+*Part of the [BLEEP Quantum Trust Network](https://github.com/BleepEcosystem/BLEEP-v1) · Protocol Version 5*
+*© 2026 Muhammad Attahir — Apache 2.0 Licence*
