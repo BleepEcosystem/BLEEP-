@@ -31,6 +31,7 @@ members = [
     "crates/bleep-wallet-core",
     "crates/bleep-zkp",
     "tools/governance-demo",
+    crates/bleep-sig-availability",
 ]
 
 [package]
@@ -122,6 +123,7 @@ chrono            = { version = "0.4.34", features = ["serde"] }
 pqcrypto          = { version = "0.18.1", optional = true }
 pqcrypto-kyber = { version = "0.8.1", optional = true }
 socket2           = "0.5"
+
 
 [dev-dependencies]
 tokio-test = "0.4.3"
