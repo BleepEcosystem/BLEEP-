@@ -3381,8 +3381,11 @@ mod tests_sprint8 {
 
     #[test]
     fn auth_service_can_be_attached_to_rpc_state() {
-        let auth =
-            Arc::new(AuthService::new(b"abcdefghijklmnopqrstuvwxyz012345".to_vec()).unwrap());
+        use sha2::{Digest, Sha256};
+
+        let seed = format!("{}:{}", std::process::id(), now_secs());
+        let secret: Vec<u8> = Sha256::digest(seed.as_bytes()).to_vec();
+        let auth = Arc::new(AuthService::new(secret).unwrap());
         let st = Arc::new(RpcState::new().with_auth_service(Arc::clone(&auth)));
         assert!(st.auth_service.is_some());
     }
