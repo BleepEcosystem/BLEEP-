@@ -17,6 +17,7 @@
 
 use anyhow::{anyhow, Result};
 use clap::Parser;
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use bleep_cli::{
@@ -46,11 +47,13 @@ use bleep_crypto::tx_signer::{generate_tx_keypair, sign_tx_payload, tx_payload};
 use bleep_governance::governance_core::{GovernanceEngine, Proposal, ProposalType, Vote};
 use bleep_state::state_manager::StateManager;
 use bleep_wallet_core::wallet::WalletManager;
+use bleep_p2p::p2p_node::{P2PNode, P2PNodeConfig};
 use bleep_zkp::Verifier as ZkVerifier;
 
 /// Default RPC endpoint (override via BLEEP_RPC env var).
 const DEFAULT_RPC: &str = "http://127.0.0.1:8545";
 const DEFAULT_BLEEP_JWT_SECRET_B64: &str = "UtQcXNbNejElXUMcGocAuRh+YLiIgR9onZ1+PUJtJiU="; // Local dev fallback; set BLEEP_JWT_SECRET in production.
+const DEFAULT_P2P_LISTEN_ADDR: &str = "0.0.0.0:7700";
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -75,8 +78,29 @@ async fn run(cmd: Commands) -> Result<()> {
     match cmd {
         // ── Node start ────────────────────────────────────────────────────
         Commands::StartNode => {
-            println!("Starting BLEEP node — this launches the full node process.");
-            println!("For production use: run the `bleep` binary instead.");
+            let listen_addr = std::env::var("BLEEP_P2P_LISTEN_ADDR")
+                .unwrap_or_else(|_| DEFAULT_P2P_LISTEN_ADDR.to_string())
+                .parse::<SocketAddr>()
+                .map_err(|e| anyhow!("Invalid BLEEP_P2P_LISTEN_ADDR: {}", e))?;
+
+            let config = P2PNodeConfig {
+                listen_addr,
+                ..Default::default()
+            };
+
+            let (node, handle) = P2PNode::start(config).await?;
+            println!(
+                "✅ P2P node started: node_id={} listen={}",
+                node.node_id,
+                listen_addr
+            );
+            println!("   Press Ctrl-C to shut it down.");
+
+            tokio::signal::ctrl_c()
+                .await
+                .map_err(|e| anyhow!("Failed to wait for Ctrl-C: {}", e))?;
+
+            handle.shutdown().await;
         }
 
         // ── Wallet ────────────────────────────────────────────────────────
