@@ -17,6 +17,7 @@
 
 use anyhow::{anyhow, Result};
 use clap::Parser;
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use bleep_cli::{
@@ -46,11 +47,12 @@ use bleep_crypto::tx_signer::{generate_tx_keypair, sign_tx_payload, tx_payload};
 use bleep_governance::governance_core::{GovernanceEngine, Proposal, ProposalType, Vote};
 use bleep_state::state_manager::StateManager;
 use bleep_wallet_core::wallet::WalletManager;
+use bleep_p2p::p2p_node::{P2PNode, P2PNodeConfig};
 use bleep_zkp::Verifier as ZkVerifier;
 
 /// Default RPC endpoint (override via BLEEP_RPC env var).
 const DEFAULT_RPC: &str = "http://127.0.0.1:8545";
-const DEFAULT_BLEEP_JWT_SECRET_B64: &str = "UtQcXNbNejElXUMcGocAuRh+YLiIgR9onZ1+PUJtJiU="; // Local dev fallback; set BLEEP_JWT_SECRET in production.
+const DEFAULT_P2P_LISTEN_ADDR: &str = "0.0.0.0:7700";
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -75,8 +77,29 @@ async fn run(cmd: Commands) -> Result<()> {
     match cmd {
         // ── Node start ────────────────────────────────────────────────────
         Commands::StartNode => {
-            println!("Starting BLEEP node — this launches the full node process.");
-            println!("For production use: run the `bleep` binary instead.");
+            let listen_addr = std::env::var("BLEEP_P2P_LISTEN_ADDR")
+                .unwrap_or_else(|_| DEFAULT_P2P_LISTEN_ADDR.to_string())
+                .parse::<SocketAddr>()
+                .map_err(|e| anyhow!("Invalid BLEEP_P2P_LISTEN_ADDR: {}", e))?;
+
+            let config = P2PNodeConfig {
+                listen_addr,
+                ..Default::default()
+            };
+
+            let (node, handle) = P2PNode::start(config).await?;
+            println!(
+                "✅ P2P node started: node_id={} listen={}",
+                node.node_id,
+                listen_addr
+            );
+            println!("   Press Ctrl-C to shut it down.");
+
+            tokio::signal::ctrl_c()
+                .await
+                .map_err(|e| anyhow!("Failed to wait for Ctrl-C: {}", e))?;
+
+            handle.shutdown().await;
         }
 
         // ── Wallet ────────────────────────────────────────────────────────
@@ -1090,31 +1113,14 @@ async fn get_block_by_id(rpc: &str, id: &str) -> Result<String> {
 
 /// Generate JWT token for RPC authentication
 async fn get_jwt_token_sync() -> Result<String> {
-    let jwt_secret_b64 = std::env::var("BLEEP_JWT_SECRET").unwrap_or_else(|_| {
-        println!("⚠️  BLEEP_JWT_SECRET env var not set. Using default dev auth secret.");
-        DEFAULT_BLEEP_JWT_SECRET_B64.to_string()
-    });
+    let jwt_secret_b64 = std::env::var("BLEEP_JWT_SECRET")
+        .map_err(|_| anyhow!("BLEEP_JWT_SECRET must be set on every node"))?;
 
     let base64_engine = base64::engine::general_purpose::STANDARD;
     let jwt_secret = match base64_engine.decode(&jwt_secret_b64) {
         Ok(secret) if secret.len() >= 32 => secret,
-        Ok(_) => {
-            println!(
-                "⚠️  BLEEP_JWT_SECRET decoded to fewer than 32 bytes; using default dev auth secret."
-            );
-            base64_engine
-                .decode(DEFAULT_BLEEP_JWT_SECRET_B64)
-                .expect("default JWT secret is valid base64")
-        }
-        Err(e) => {
-            println!(
-                "⚠️  Failed to decode BLEEP_JWT_SECRET: {}; using default dev auth secret.",
-                e
-            );
-            base64_engine
-                .decode(DEFAULT_BLEEP_JWT_SECRET_B64)
-                .expect("default JWT secret is valid base64")
-        }
+        Ok(_) => return Err(anyhow!("BLEEP_JWT_SECRET must decode to at least 32 bytes")),
+        Err(e) => return Err(anyhow!("Failed to decode BLEEP_JWT_SECRET: {}", e)),
     };
 
     let session_mgr = SessionManager::new(jwt_secret)

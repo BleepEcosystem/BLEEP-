@@ -720,10 +720,10 @@ pub fn rpc_routes_with_state(
                                         );
                                         return Ok::<_, warp::Rejection>(resp);
                                     }
-                                    Ok(mut ident) => {
-                                        let _ = ident.activate();
+                                    Ok(ident) => {
                                         let current_stake = ident.stake;
                                         let _ = reg.register_validator(ident);
+                                        let _ = reg.activate_validator(&validator_id);
                                         let resp = StakeResp {
                                             validator_id,
                                             status: "registered".into(),
@@ -3381,8 +3381,11 @@ mod tests_sprint8 {
 
     #[test]
     fn auth_service_can_be_attached_to_rpc_state() {
-        let auth =
-            Arc::new(AuthService::new(b"abcdefghijklmnopqrstuvwxyz012345".to_vec()).unwrap());
+        use sha2::{Digest, Sha256};
+
+        let seed = format!("{}:{}", std::process::id(), now_secs());
+        let secret: Vec<u8> = Sha256::digest(seed.as_bytes()).to_vec();
+        let auth = Arc::new(AuthService::new(secret).unwrap());
         let st = Arc::new(RpcState::new().with_auth_service(Arc::clone(&auth)));
         assert!(st.auth_service.is_some());
     }
