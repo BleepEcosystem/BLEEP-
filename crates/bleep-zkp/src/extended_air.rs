@@ -36,6 +36,7 @@
 //! | **Total transition**               |        | **67**|
 //! | **Boundary assertions**            |        | **14**|
 
+use serde::{Deserialize, Serialize};
 use winterfell::{
     Air, AirContext, Assertion, EvaluationFrame, FieldExtension,
     ProofOptions, TraceInfo, TransitionConstraintDegree,
@@ -127,7 +128,7 @@ pub fn bytes_lo(hash: &[u8; 32]) -> BaseElement {
 ///
 /// Every field is committed to during proof generation and checked by every
 /// verifier before accepting a `StarkProof`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExtendedBlockPublicInputs {
     /// Block height (`block_index` in the consensus layer).
     pub block_index: u64,
