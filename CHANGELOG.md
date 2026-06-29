@@ -19,6 +19,61 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [1.1.0] — Sprint 10 — SAL Integration — 2026-06-28
+
+### Highlights
+
+Sprint 10 completes the **Signature Availability Layer (SAL)** — the solution to the 204 MB per-block
+SPHINCS+ signature-propagation problem. Four targeted changes across three crates convert the SAL
+from a built-but-unconnected subsystem into a live, load-bearing component of block production,
+gossip, and validation.
+
+### Added
+
+**`bleep-core` — Block struct and validation**
+- `sig_commitment_root: [u8; 32]` field on `Block` and `BlockHeader` (`#[serde(default)]` for legacy compatibility)
+- `Block::to_gossip()` — returns a clone with all `tx.signature` fields zeroed; used for bandwidth-efficient P2P gossip
+- `Block::compact()` — now produces `CompactBlock` with `Vec<CompactTransaction>` (full tx data, no signatures) alongside `tx_hashes`
+- `CompactTransaction` struct — carries sender, receiver, amount, timestamp, and `sig_hash: [u8; 32]`; no signature
+- `Block::compute_hash()` — now includes `sig_commitment_root` so SPHINCS+ block signatures commit to the SAL root
+- `Block::verify_zkp()` — dispatches to `verify_extended_stark_zkp()` on `EXTSTARK1` magic prefix detection
+- `Block::verify_extended_stark_zkp()` — verifies 68-column Winterfell STARK proofs with embedded public inputs
+- `Block::encode_ext_pub_inputs()` / `decode_ext_pub_inputs()` — fixed 232-byte LE serialisation for `ExtendedBlockPublicInputs`
+- `BlockValidator::verify_sig_commitment_root()` — recomputes Blake3 Merkle root over SHA3-256(sig_i) and compares; skipped for gossip-stripped blocks (STARK proof covers it)
+- `block_validation.rs`: per-transaction SPHINCS+ verification skipped when all signatures are stripped (`all_sigs_stripped` path)
+
+**`bleep-consensus` — Block production**
+- `BlockProducer::generate_extended_proof()` — 68-column STARK proof generation; serialises as `EXTSTARK1 | 232-byte pub_inputs | StarkProof`
+- Reordered production steps: 7a (compute SAL root) → 7b (stamp on block) → 7c (SPHINCS+ sign) → 8 (extended STARK prove)
+  — ensures `sig_commitment_root` is bound into both the block signature and the proof
+- Step 10 gossip now calls `block.to_gossip()` — signatures stripped, ~200–400 KB instead of ~204 MB per 512-tx block
+- Step 10b SAL announcement reuses `sig_hashes` computed in step 7a — no double-hashing of 49,856-byte signatures
+- Legacy fallback path preserved for empty blocks
+
+**`bleep-zkp` — ZKP primitives**
+- `pub mod extended_air` and `pub mod batch_sig_prover` exported from `lib.rs`
+- `ExtendedBlockPublicInputs` now derives `Serialize, Deserialize`
+- `EXTENDED_STARK_MAGIC: &[u8] = b"EXTSTARK1"` — proof format discriminator
+- `EXT_PUB_INPUTS_LEN: usize = 232` — fixed public-inputs header length
+
+### Changed
+
+- `bleep-core/Cargo.toml`: added `bleep-sig-availability` dependency
+- `bleep-consensus/Cargo.toml`: added `winterfell = "0.13.1"` for `use winterfell::Prover` in `generate_extended_proof`
+
+### Result
+
+| Metric | Before Sprint 10 | After Sprint 10 |
+|--------|-----------------|-----------------|
+| Per-block gossip bandwidth (512 tx) | ~24.3 MB | ~320 KB |
+| Reduction | — | ~98.7% |
+| `sig_commitment_root` in block header | ✗ | ✅ |
+| Block validation checks SAL root | ✗ | ✅ |
+| Extended STARK proof in production | ✗ | ✅ |
+| Gossip strips tx signatures | ✗ | ✅ |
+
+---
+
 ## [1.0.0] — Sprint 9 — 2026-04-10
 
 ### Highlights
