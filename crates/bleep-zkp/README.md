@@ -17,8 +17,10 @@ Copyright © 2025 Muhammad Attahir.
 
 ```
 bleep-zkp
-├── stark_proofs   — Block validity AIR + STARK prover/verifier (Winterfell)
-└── pq_proofs      — Post-quantum ZKP constructions
+├── stark_proofs      — Base block validity AIR + STARK prover/verifier (Winterfell, 5-column)
+├── extended_air      — 68-column ExtendedBlockValidityAir with sig_commitment_root (Sprint 10)
+├── batch_sig_prover  — ParallelBatchSigProver: rayon-parallel SAL commitment + STARK prove/verify
+└── pq_proofs         — Post-quantum ZKP constructions (governance votes, cross-chain relay)
 ```
 
 ---
@@ -63,6 +65,63 @@ verifier.verify(&proof)?;
 
 STARKs require **no trusted setup**. Proofs are transparent and post-quantum secure (hash-based, not ECC-based).
 
+### `extended_air` — Extended Block Validity Circuit (Sprint 10)
+
+A 68-column extension of `BlockValidityAir` that commits to the Signature Availability Layer root alongside all standard block fields.
+
+**Additional columns (48–67):**
+
+| Columns | Purpose |
+|---------|---------|
+| 48–49 | `sig_commitment_root` (Blake3 Merkle root over SHA3-256(sig_i)) |
+| 50–51 | `batch_seq_id` (monotonic, equals `block.index`) |
+| 52–53 | `smt_root` (SHA3-256 of `shard_state_root`) |
+| 54–67 | Signature count tracking and active-batch state |
+
+**Public inputs (`ExtendedBlockPublicInputs`):**
+
+```rust
+pub struct ExtendedBlockPublicInputs {
+    pub block_index:          u64,
+    pub epoch_id:             u64,
+    pub tx_count:             u32,
+    pub blocks_per_epoch:     u64,
+    pub merkle_root_hash:     [u8; 32],
+    pub validator_pk_hash:    [u8; 32],
+    pub sk_seed_hash:         [u8; 32],
+    pub block_hash:           [u8; 32],
+    pub smt_root:             [u8; 32],
+    pub sig_commitment_root:  [u8; 32],   // ← SAL root
+    pub sig_count:            u32,
+    pub batch_seq_id:         u64,
+}
+```
+
+**Proof format written to `block.zk_proof`:**
+
+```
+[9 bytes]    b"EXTSTARK1"                   ← magic discriminator
+[232 bytes]  ExtendedBlockPublicInputs      ← fixed-width LE encoding
+[remainder]  Winterfell StarkProof bytes
+```
+
+`Block::verify_zkp()` dispatches on the `EXTSTARK1` prefix automatically.
+
+### `batch_sig_prover` — Parallel Batch Signature Prover
+
+`ParallelBatchSigProver` orchestrates the full SAL prove/verify pipeline:
+
+```rust
+use bleep_zkp::{ParallelBatchSigProver, bleep_proof_options};
+
+let prover = ParallelBatchSigProver::new(blocks_per_epoch, bleep_proof_options());
+let trace  = prover.build_trace(&pub_inputs, &sig_hashes);
+let proof  = prover.prove(trace)?;  // ~850–950 ms, within 3,000 ms slot budget
+ParallelBatchSigProver::verify_block(pub_inputs, proof, &options)?;
+```
+
+Hashing is rayon-parallelised: SHA3-256(sig_i) for all transactions runs concurrently, then the Blake3 Merkle tree is built from the resulting hashes. The commitment is deterministic — given identical transaction signatures, all honest validators produce identical `sig_commitment_root` values.
+
 ### `pq_proofs` — Post-Quantum ZKP Constructions
 
 Additional ZKP constructions designed for quantum-adversarial environments, used in:
@@ -74,13 +133,16 @@ Additional ZKP constructions designed for quantum-adversarial environments, used
 
 ## Properties
 
-| Property | STARK | Notes |
-|----------|-------|-------|
-| Trusted setup | ❌ None | Transparent; no SRS required |
-| Post-quantum secure | ✅ | Hash-based; no ECC |
-| Proof size | ~100 KB | Larger than SNARKs but verifiable faster |
-| Prover time | ~seconds | Depends on circuit size |
-| Verifier time | ~milliseconds | Logarithmic in trace length |
+| Property | Base circuit | Extended circuit (Sprint 10) |
+|----------|-------------|------------------------------|
+| Trusted setup | ❌ None | ❌ None |
+| Post-quantum secure | ✅ | ✅ |
+| Trace width | 5 columns | 68 columns |
+| Proof size | ~100 KB | ~100 KB + 232-byte pub_inputs header |
+| Proof format | `STARK_V1` prefix | `EXTSTARK1` prefix |
+| SAL root committed | ✗ | ✅ `sig_commitment_root` in circuit |
+| Prover time | ~850 ms | ~850–950 ms (rayon-parallel hashing) |
+| Verifier time | ~12 ms | ~12 ms |
 
 ---
 
@@ -90,7 +152,8 @@ Additional ZKP constructions designed for quantum-adversarial environments, used
 
 | Consumer | Purpose |
 |----------|---------|
-| `bleep-consensus` | Block validity attestation |
+| `bleep-consensus` | Block validity attestation (base + extended circuits) |
+| `bleep-core` | `Block::verify_extended_stark_zkp()` — called from `verify_zkp()` on `EXTSTARK1` prefix |
 | `bleep-governance` | Anonymous ZK vote verification |
 | `bleep-interop` | Cross-chain STARK proof relay (Layer 3) |
 | `bleep-crypto` | Winterfell STARK integration in `zkp_verification` |
