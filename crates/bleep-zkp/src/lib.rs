@@ -33,6 +33,22 @@ use winterfell::math::fields::f128::BaseElement;
 // ── Modules ───────────────────────────────────────────────────────────────────
 pub mod stark_proofs;
 
+pub mod extended_air;
+pub mod batch_sig_prover;
+
+pub use extended_air::{
+    ExtendedBlockPublicInputs, ExtendedBlockValidityAir, bleep_proof_options,
+};
+pub use batch_sig_prover::{
+    BatchProveResult, BatchProverError, ParallelBatchSigProver,
+    compute_commitment_parallel,
+};
+
+/// Magic prefix written before extended STARK proof bytes in block.zk_proof.
+pub const EXTENDED_STARK_MAGIC: &[u8] = b"EXTSTARK1";
+/// Fixed byte length of the serialized ExtendedBlockPublicInputs header.
+pub const EXT_PUB_INPUTS_LEN: usize = 232;
+
 pub use stark_proofs::{BlockValidityAir, BlockValidityProver, BlockValidityVerifier, StarkProof};
 pub use ProofVerifier as Verifier;
 
