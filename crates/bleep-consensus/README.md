@@ -65,17 +65,22 @@ Mode switches are logged, signed, and traceable in the tamper-evident audit log.
 Every block produced by `BlockProducer` follows this sequence:
 
 ```
-1. Select up to MAX_TXS_PER_BLOCK (4,096) transactions by fee — descending order
-2. Compute Sparse Merkle Trie root over resulting state
-3. Generate Winterfell STARK BlockValidityProof via BlockValidityProver
-   — 48-column execution trace, f128 field, FRI backend
-   — avg ~850ms on reference hardware (8-core, 32 GB RAM)
-   — no trusted setup required
-4. Sign completed block with SPHINCS+-SHAKE-256f-simple (FIPS 205, SL5)
-5. Broadcast via bleep-p2p gossip
+1.   Select ≤MAX_TXS_PER_BLOCK transactions by fee — descending order
+2.   Compute Sparse Merkle Trie root over resulting state
+7a.  compute_sig_commitment(&raw_sigs)        →  (sig_commitment_root, sig_hashes)
+7b.  block.sig_commitment_root = root         ←  stamped BEFORE signing
+7c.  sign_block_with_pk()                     →  SPHINCS+ sig commits to sig_commitment_root
+8.   generate_extended_proof()                →  EXTSTARK1 | 232-byte pub_inputs | StarkProof
+                                                 68-column trace, FRI backend, ~850–950 ms
+9.   verify_zkp()                             →  local check before chain commit
+10.  to_gossip() → P2P broadcast              →  ~320 KB (tx.signature bytes stripped)
+10b. broadcast_block_announcement()           →  SAL sig_hashes to bleep-p2p peers
+11.  drain committed txs from pool
 ```
 
-Both the STARK proof and the SPHINCS+ signature are required for a block to be accepted. A block with a valid signature but invalid STARK proof is rejected.
+The signing step (7c) follows `sig_commitment_root` being stamped on the block (7b), ensuring the SPHINCS+ signature cryptographically commits to the SAL root. Both the extended STARK proof and the SPHINCS+ block signature are required for a block to be accepted. Gossip-stripped blocks (empty `tx.signature`) are valid — receivers verify authenticity via the STARK-committed `sig_commitment_root`.
+
+**Bandwidth:** `to_gossip()` zeroes all SPHINCS+ signatures before P2P broadcast. For a 512-tx block, gossip payload drops from ~24.3 MB to ~320 KB (~98.7% reduction).
 
 ---
 
@@ -124,6 +129,8 @@ The following scenarios are covered in the 72-hour adversarial test suite:
 | `DoubleSign(validator-0)` | 33% slashed; evidence committed; tombstoned |
 | `STARKProofTamper` | Tampered proof rejected at `BlockValidityVerifier` |
 | `LoadStress(10,000 TPS, 60s)` | Max throughput; STARK proofs generated within slot budget |
+| SAL integration (Sprint 10) | `sig_commitment_root` verified in `validate_block()`; gossip-stripped blocks accepted via extended STARK proof |
+| SAL integration | `sig_commitment_root` verified in `validate_block()`; gossip-stripped blocks accepted |
 
 ---
 
