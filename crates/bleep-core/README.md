@@ -61,19 +61,57 @@ The name `ZKTransaction` reflects BLEEP's broader ZK capabilities; all transacti
 ### `Block`
 
 ```rust
-struct Block {
-    index:        u64,
-    prev_hash:    [u8; 32],       // SHA3-256 of previous block
-    transactions: Vec<ZKTransaction>,
-    state_root:   [u8; 32],       // Sparse Merkle Trie root (SPHINCS+-signed by proposer)
-    stark_proof:  Vec<u8>,        // Winterfell STARK BlockValidityProof
-    timestamp:    u64,
-    proposer_pk:  Vec<u8>,        // SPHINCS+ public key of block proposer
-    signature:    Vec<u8>,        // SPHINCS+ block signature
+pub struct Block {
+    pub index:                u64,
+    pub timestamp:            u64,
+    pub transactions:         Vec<Transaction>,
+    pub previous_hash:        String,
+    pub merkle_root:          String,
+    pub validator_signature:  Vec<u8>,  // SPHINCS+ pk_bytes || detached_sig
+    pub zk_proof:             Vec<u8>,  // EXTSTARK1 | 232-byte pub_inputs | StarkProof
+    pub epoch_id:             u64,
+    pub consensus_mode:       ConsensusMode,
+    pub protocol_version:     u32,
+    pub shard_registry_root:  String,
+    pub shard_id:             u64,
+    pub shard_state_root:     String,
+    #[serde(default)]
+    pub sig_commitment_root:  [u8; 32], // Blake3 Merkle root over SHA3-256(sig_i) — Sprint 10
 }
 ```
 
-Both `stark_proof` and `signature` are required for a block to be accepted by any validator.
+`sig_commitment_root` is set by `BlockProducer` **before** SPHINCS+ signing (step 7b), so it is
+cryptographically bound into both the block signature and the extended STARK proof. `[0u8; 32]`
+for genesis and empty blocks.
+
+**Gossip (Sprint 10):** `Block::to_gossip()` returns a clone with all `tx.signature` bytes zeroed.
+Receivers apply state transitions from transaction data and verify signature authenticity via
+`sig_commitment_root`. Individual signatures are retrievable from the SAL gossip store on demand.
+Gossip bandwidth: ~24.3 MB → ~320 KB per block at 512 tx/block (~98.7% reduction).
+
+**Compact gossip types (Sprint 10):**
+
+```rust
+/// Transaction data without SPHINCS+ signature — used in CompactBlock for gossip.
+pub struct CompactTransaction {
+    pub sender:    String,
+    pub receiver:  String,
+    pub amount:    u64,
+    pub timestamp: u64,
+    pub sig_hash:  [u8; 32],  // SHA3-256(raw_signature) — leaf in sig_commitment_root tree
+}
+
+/// Bandwidth-efficient block representation for P2P gossip.
+pub struct CompactBlock {
+    pub header:       BlockHeader,             // carries sig_commitment_root
+    pub tx_hashes:    Vec<[u8; 32]>,           // SHA3-256(tx) for Merkle membership proofs
+    pub transactions: Vec<CompactTransaction>, // full tx data, no signatures
+}
+```
+
+Both `zk_proof` and `validator_signature` are required for a block to be accepted by any validator.
+Gossip-stripped blocks (empty `tx.signature`) are valid — authenticity is verified via the
+STARK-committed `sig_commitment_root`.
 
 ---
 
@@ -88,6 +126,8 @@ Both `stark_proof` and `signature` are required for a block to be accepted by an
 | No negative balances | All balance deltas must leave balances ≥ 0 |
 | Block hash continuity | `block.prev_hash == hash(previous_block)` |
 | ZK proof inclusion | Asset recovery requests must include a valid ZKP |
+| SAL root consistency | `block.sig_commitment_root` must equal Blake3 Merkle root over SHA3-256(sig_i) for all block transactions (or `[0u8;32]` for empty/genesis blocks) |
+| SAL root consistency | `sig_commitment_root` must equal Blake3 Merkle root over SHA3-256(sig_i) for all block transactions |
 
 ---
 
