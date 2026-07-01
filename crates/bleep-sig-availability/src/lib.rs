@@ -4,7 +4,7 @@
 //! One `BatchBlockAttestation` per validator per block — not per transaction.
 
 #![forbid(unsafe_code)]
-#![warn(missing_docs)]
+#![allow(missing_docs)]
 
 pub mod availability;
 pub mod gossip;

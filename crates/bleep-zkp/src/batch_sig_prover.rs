@@ -102,7 +102,7 @@ pub struct BatchProveResult {
 /// `BlockValidityAir` using Rayon for parallel trace construction.
 pub struct ParallelBatchSigProver {
     options:          ProofOptions,
-    blocks_per_epoch: u64,
+    _blocks_per_epoch: u64,
     /// BPS threshold written into the trace for validators to read.
     availability_threshold_bps: u32,
 }
@@ -114,7 +114,7 @@ impl ParallelBatchSigProver {
     pub fn new(blocks_per_epoch: u64, options: ProofOptions) -> Self {
         Self {
             options,
-            blocks_per_epoch,
+            _blocks_per_epoch: blocks_per_epoch,
             availability_threshold_bps: 6_667,
         }
     }

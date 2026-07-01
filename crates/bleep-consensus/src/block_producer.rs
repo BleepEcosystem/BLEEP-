@@ -672,14 +672,6 @@ impl BlockProducer {
         // the trace directly and call prove() on the prover.
         let prover = ParallelBatchSigProver::new(blocks_per_epoch, bleep_proof_options());
 
-        // The sk_seed is the first 32 bytes of SHA3-256(validator_sk)
-        let sk_seed: [u8; 32] = {
-            let d = Sha3_256::digest(validator_sk);
-            let mut out = [0u8; 32];
-            out.copy_from_slice(&d[..32]);
-            out
-        };
-
         // Build the trace directly with pre-filled pub_inputs
         // (sig_commitment_root already set from the earlier compute_sig_commitment call)
         use winterfell::Prover;

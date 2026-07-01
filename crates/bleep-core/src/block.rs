@@ -692,7 +692,13 @@ impl Block {
             () => {{ let v = u32::from_le_bytes(b[off..off+4].try_into().ok()?); off += 4; v }};
         }
         macro_rules! read_hash {
-            () => {{ let mut h = [0u8;32]; h.copy_from_slice(&b[off..off+32]); off += 32; h }};
+            () => {{
+                let start = off;
+                let mut h = [0u8;32];
+                h.copy_from_slice(&b[start..start+32]);
+                off = start + 32;
+                h
+            }};
         }
 
         let block_index       = read_u64!();
@@ -707,6 +713,7 @@ impl Block {
         let block_hash        = read_hash!();
         let smt_root          = read_hash!();
         let sig_commitment_root = read_hash!();
+        let _ = off;
 
         Some(ExtendedBlockPublicInputs {
             block_index, epoch_id, tx_count, blocks_per_epoch,
