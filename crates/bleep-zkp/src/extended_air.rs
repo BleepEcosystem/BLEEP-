@@ -36,10 +36,11 @@
 //! | **Total transition**               |        | **67**|
 //! | **Boundary assertions**            |        | **14**|
 
+use serde::{Deserialize, Serialize};
 use winterfell::{
-    Air, AirContext, Assertion, EvaluationFrame, FieldExtension,
+    Air, AirContext, Assertion, BatchingMethod, EvaluationFrame, FieldExtension,
     ProofOptions, TraceInfo, TransitionConstraintDegree,
-    math::{fields::f128::BaseElement, FieldElement, StarkField, ToElements},
+    math::{fields::f128::BaseElement, FieldElement, ToElements},
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -49,8 +50,8 @@ use winterfell::{
 /// Total number of columns in the extended trace.
 pub const TRACE_WIDTH: usize = 68;
 
-/// Minimum trace length (Winterfell requires ≥ 4).
-pub const MIN_TRACE_LENGTH: usize = 4;
+/// Minimum trace length required by the Winterfell prover/verifier stack.
+pub const MIN_TRACE_LENGTH: usize = 8;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Column index constants
@@ -127,7 +128,7 @@ pub fn bytes_lo(hash: &[u8; 32]) -> BaseElement {
 ///
 /// Every field is committed to during proof generation and checked by every
 /// verifier before accepting a `StarkProof`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExtendedBlockPublicInputs {
     /// Block height (`block_index` in the consensus layer).
     pub block_index: u64,
@@ -197,12 +198,12 @@ pub struct ExtendedBlockValidityAir {
     pi_merkle_root_lo: BaseElement,
     pi_validator_pk_hi: BaseElement,
     pi_validator_pk_lo: BaseElement,
-    pi_sk_seed_hash_hi: BaseElement,
-    pi_sk_seed_hash_lo: BaseElement,
-    pi_block_hash_hi:  BaseElement,
-    pi_block_hash_lo:  BaseElement,
-    pi_smt_root_hi:    BaseElement,
-    pi_smt_root_lo:    BaseElement,
+    _pi_sk_seed_hash_hi: BaseElement,
+    _pi_sk_seed_hash_lo: BaseElement,
+    _pi_block_hash_hi:  BaseElement,
+    _pi_block_hash_lo:  BaseElement,
+    _pi_smt_root_hi:    BaseElement,
+    _pi_smt_root_lo:    BaseElement,
     pi_sig_root_hi:    BaseElement,
     pi_sig_root_lo:    BaseElement,
     pi_sig_count:      BaseElement,
@@ -258,12 +259,12 @@ impl Air for ExtendedBlockValidityAir {
             pi_merkle_root_lo:   bytes_lo(&pub_inputs.merkle_root_hash),
             pi_validator_pk_hi:  bytes_hi(&pub_inputs.validator_pk_hash),
             pi_validator_pk_lo:  bytes_lo(&pub_inputs.validator_pk_hash),
-            pi_sk_seed_hash_hi:  bytes_hi(&pub_inputs.sk_seed_hash),
-            pi_sk_seed_hash_lo:  bytes_lo(&pub_inputs.sk_seed_hash),
-            pi_block_hash_hi:    bytes_hi(&pub_inputs.block_hash),
-            pi_block_hash_lo:    bytes_lo(&pub_inputs.block_hash),
-            pi_smt_root_hi:      bytes_hi(&pub_inputs.smt_root),
-            pi_smt_root_lo:      bytes_lo(&pub_inputs.smt_root),
+            _pi_sk_seed_hash_hi:  bytes_hi(&pub_inputs.sk_seed_hash),
+            _pi_sk_seed_hash_lo:  bytes_lo(&pub_inputs.sk_seed_hash),
+            _pi_block_hash_hi:    bytes_hi(&pub_inputs.block_hash),
+            _pi_block_hash_lo:    bytes_lo(&pub_inputs.block_hash),
+            _pi_smt_root_hi:      bytes_hi(&pub_inputs.smt_root),
+            _pi_smt_root_lo:      bytes_lo(&pub_inputs.smt_root),
             pi_sig_root_hi:      bytes_hi(&pub_inputs.sig_commitment_root),
             pi_sig_root_lo:      bytes_lo(&pub_inputs.sig_commitment_root),
             pi_sig_count:        BaseElement::new(pub_inputs.sig_count as u128),
@@ -367,5 +368,7 @@ pub fn bleep_proof_options() -> ProofOptions {
         FieldExtension::None,
         8,                        // FRI folding factor
         127,                      // FRI max remainder degree
+        BatchingMethod::Linear,
+        BatchingMethod::Linear,
     )
 }

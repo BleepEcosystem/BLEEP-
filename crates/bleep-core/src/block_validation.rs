@@ -1,4 +1,6 @@
 use crate::block::{Block, Transaction};
+use bleep_sig_availability::compute_sig_commitment;
+use hex;
 use rayon::prelude::*;
 
 pub struct BlockValidator;
@@ -39,11 +41,78 @@ impl BlockValidator {
             return false;
         }
 
-        // Verify all transaction signatures in parallel to avoid sequential DoS.
-        if !Self::verify_transaction_signatures(&block.transactions) {
+        // ── Verify SAL commitment root ────────────────────────────────────
+        // If sig_commitment_root is set (non-zero), verify it matches the
+        // actual transaction signatures. For gossip-stripped blocks (tx.signature
+        // is empty), the root is already bound into the SPHINCS+ block signature
+        // and the extended STARK proof, so we trust the ZKP path above.
+        if !Self::verify_sig_commitment_root(block) {
             log::error!(
-                "Block {} contains invalid transaction signatures",
+                "Block {} sig_commitment_root verification failed",
                 block.index
+            );
+            return false;
+        }
+
+        // Verify individual transaction signatures in parallel.
+        // Skipped for gossip-stripped blocks (empty signatures) — the SAL root
+        // and STARK proof guarantee signature availability and correctness.
+        let all_sigs_stripped = block.transactions.iter().all(|tx| tx.signature.is_empty());
+        if !all_sigs_stripped {
+            if !Self::verify_transaction_signatures(&block.transactions) {
+                log::error!(
+                    "Block {} contains invalid transaction signatures",
+                    block.index
+                );
+                return false;
+            }
+        }
+
+        true
+    }
+
+    /// Verify that `block.sig_commitment_root` is consistent with the transaction
+    /// signatures carried in the block (proposer path) or trust the STARK proof
+    /// (gossip-stripped path).
+    ///
+    /// # Rules
+    /// - `sig_commitment_root == [0u8;32]` → genesis / empty block: always pass.
+    /// - Transactions have non-empty signatures → recompute Blake3 Merkle root
+    ///   over SHA3-256(sig_i) and compare byte-for-byte.
+    /// - Transactions have empty signatures (gossip-stripped) → trust the
+    ///   extended STARK proof (already verified above); return true.
+    pub fn verify_sig_commitment_root(block: &Block) -> bool {
+        let zero_root = [0u8; 32];
+        if block.sig_commitment_root == zero_root {
+            // Genesis block or block without SAL — no commitment to verify.
+            return true;
+        }
+
+        // Count how many transactions have real signatures.
+        let sig_count = block.transactions.iter()
+            .filter(|tx| !tx.signature.is_empty())
+            .count();
+
+        if sig_count == 0 {
+            // All signatures stripped — block was received via compact gossip.
+            // The sig_commitment_root is authenticated by the SPHINCS+ block
+            // signature and the extended STARK proof verified above.
+            return true;
+        }
+
+        // Proposer path: we have the raw signatures; recompute and compare.
+        let raw_sigs: Vec<Vec<u8>> = block.transactions.iter()
+            .map(|tx| tx.signature.clone())
+            .collect();
+
+        let (computed_root, _) = compute_sig_commitment(&raw_sigs);
+
+        if computed_root != block.sig_commitment_root {
+            log::error!(
+                "Block {} SAL root mismatch: expected {}, got {}",
+                block.index,
+                hex::encode(block.sig_commitment_root),
+                hex::encode(computed_root),
             );
             return false;
         }

@@ -37,6 +37,10 @@ use bleep_core::ZKTransaction;
 use bleep_sig_availability::{broadcast_block_announcement, BlockId, GossipBroadcaster};
 use bleep_state::state_manager::StateManager;
 use bleep_zkp::{BlockProver, BlockValidityCircuit};
+use bleep_zkp::{
+    ParallelBatchSigProver, ExtendedBlockPublicInputs,
+    bleep_proof_options, EXTENDED_STARK_MAGIC, EXT_PUB_INPUTS_LEN,
+};
 use parking_lot::Mutex as PLMutex;
 use sha3::{Digest, Sha3_256};
 
@@ -432,34 +436,87 @@ impl BlockProducer {
             hex::encode(&state_root),       // shard_state_root = full state root
         );
 
-        // ── 7: Sign block with real SPHINCS+-SHAKE-256f-simple secret/public key ──
-        if let Err(e) =
-            block.sign_block_with_pk(&self.config.validator_sk, &self.config.validator_pk)
-        {
-            warn!(
-                "[BlockProducer] sign_block_with_pk failed: {} — stamping validator_id",
-                e
-            );
-            block.validator_signature = self.config.validator_id.as_bytes().to_vec();
-        }
+        // ── 7a: Compute sig_commitment_root from raw signatures ───────────────
+        // Must happen BEFORE signing so the commitment is bound into the
+        // SPHINCS+ block signature (via compute_hash) and the STARK proof.
+        let raw_sigs: Vec<Vec<u8>> = block_txs.iter()
+            .map(|tx| tx.signature.clone())
+            .collect();
 
-        // ── 8: Generate a Winterfell block-validity proof ─────────────────────
-        let (zk_proof, prove_time_ms) =
-            match Self::generate_winterfell_proof(&block, &self.config.validator_pk, &self.config.validator_sk) {
-                Ok(result) => result,
-                Err(e) => {
-                    error!("[BlockProducer] Winterfell proof generation failed: {}", e);
-                    return Err(e);
+        let (sal_proof_bytes, prove_time_ms, sal_sig_hashes, sal_commitment_root) =
+            if !raw_sigs.is_empty() {
+                // ── Extended path: compute commitment + extended STARK proof ──
+                let (sig_commitment_root, sig_hashes) =
+                    bleep_sig_availability::compute_sig_commitment(&raw_sigs);
+
+                // ── 7b: Stamp sig_commitment_root on the block ─────────────
+                block.sig_commitment_root = sig_commitment_root;
+
+                // ── 7c: Sign block (now commits to sig_commitment_root) ────
+                if let Err(e) = block.sign_block_with_pk(
+                    &self.config.validator_sk,
+                    &self.config.validator_pk,
+                ) {
+                    warn!("[BlockProducer] sign_block_with_pk failed: {} — stamping validator_id", e);
+                    block.validator_signature = self.config.validator_id.as_bytes().to_vec();
+                }
+
+                // ── 8: Extended STARK proof (68-column, SAL-bound) ────────
+                match Self::generate_extended_proof(
+                    &block,
+                    &self.config.validator_pk,
+                    &self.config.validator_sk,
+                    sig_commitment_root,
+                    &sig_hashes,
+                ) {
+                    Ok((proof_bytes, ms)) => (proof_bytes, ms, sig_hashes, sig_commitment_root),
+                    Err(e) => {
+                        // Fall back to legacy proof rather than dropping the block.
+                        warn!("[BlockProducer] Extended proof failed ({}), falling back to legacy", e);
+                        if let Err(e2) = block.sign_block_with_pk(
+                            &self.config.validator_sk, &self.config.validator_pk,
+                        ) {
+                            warn!("[BlockProducer] Fallback sign failed: {}", e2);
+                        }
+                        match Self::generate_winterfell_proof(
+                            &block, &self.config.validator_pk, &self.config.validator_sk,
+                        ) {
+                            Ok((p, ms)) => (p, ms, vec![], [0u8; 32]),
+                            Err(e3) => {
+                                error!("[BlockProducer] Fallback proof generation failed: {}", e3);
+                                return Err(e3);
+                            }
+                        }
+                    }
+                }
+            } else {
+                // ── Empty block: use legacy proof path ───────────────────────
+                // ── 7c: Sign (sig_commitment_root stays [0u8;32]) ─────────
+                if let Err(e) = block.sign_block_with_pk(
+                    &self.config.validator_sk,
+                    &self.config.validator_pk,
+                ) {
+                    warn!("[BlockProducer] sign_block_with_pk failed: {} — stamping validator_id", e);
+                    block.validator_signature = self.config.validator_id.as_bytes().to_vec();
+                }
+                match Self::generate_winterfell_proof(
+                    &block, &self.config.validator_pk, &self.config.validator_sk,
+                ) {
+                    Ok((p, ms)) => (p, ms, vec![], [0u8; 32]),
+                    Err(e) => {
+                        error!("[BlockProducer] Winterfell proof generation failed: {}", e);
+                        return Err(e);
+                    }
                 }
             };
-        block.zk_proof = zk_proof;
+
+        block.zk_proof = sal_proof_bytes;
 
         if !block.verify_zkp() {
-            return Err(format!("Winterfell proof verification failed for block {}", next_height));
+            return Err(format!("ZKP verification failed for block {}", next_height));
         }
 
         // ── 9: Commit to chain ────────────────────────────────────────────────
-        // add_block calls verify_signature(pk_bytes) internally.
         let accepted = {
             let mut chain = self
                 .blockchain
@@ -476,30 +533,32 @@ impl BlockProducer {
             return Err(format!("Block {} validation failed", next_height));
         }
 
-        // ── 10: Gossip to peers ───────────────────────────────────────────────
-        // Direct broadcast for low latency; GossipBridge also subscribes to block_tx.
+        // ── 10: Gossip stripped block to peers ────────────────────────────────
+        // Signatures are stripped — receivers verify authenticity via
+        // sig_commitment_root (bound in SPHINCS+ sig + extended STARK proof).
+        // Bandwidth: ~200-400 KB instead of ~204 MB for a full 512-tx block.
         if let Some(ref node) = self.p2p {
-            let payload = serde_json::to_vec(&block).unwrap_or_default();
+            let payload = serde_json::to_vec(&block.to_gossip()).unwrap_or_default();
             node.broadcast(MessageType::Block, payload);
         }
 
-        // ── 10b: SIG availability announcement ───────────────────────────────
+        // ── 10b: SAL announcement (sig_hashes computed in step 7a) ───────────
         if let Some(ref broadcaster) = self.sal_broadcaster {
-            let sig_hashes: Vec<Vec<u8>> = block_txs.iter().map(|tx| tx.signature.clone()).collect();
-            let (sig_commitment_root, sig_hashes) = bleep_sig_availability::compute_sig_commitment(&sig_hashes);
-            let mut block_hash = [0u8; 32];
-            let hash_hex = block.compute_hash();
-            if let Ok(_) = hex::decode_to_slice(&hash_hex[..64], &mut block_hash) {
-                let block_id = BlockId { height: next_height, block_hash: block_hash };
-                if let Err(e) = broadcast_block_announcement(
-                    broadcaster.as_ref(),
-                    block_id,
-                    sig_commitment_root,
-                    sig_hashes,
-                    &self.config.validator_sk,
-                    self.config.validator_pk.clone(),
-                ) {
-                    warn!("[BlockProducer] SAL announcement failed: {}", e);
+            if !sal_sig_hashes.is_empty() {
+                let mut block_hash = [0u8; 32];
+                let hash_hex = block.compute_hash();
+                if hex::decode_to_slice(&hash_hex[..64], &mut block_hash).is_ok() {
+                    let block_id = BlockId { height: next_height, block_hash };
+                    if let Err(e) = broadcast_block_announcement(
+                        broadcaster.as_ref(),
+                        block_id,
+                        sal_commitment_root,
+                        sal_sig_hashes,
+                        &self.config.validator_sk,
+                        self.config.validator_pk.clone(),
+                    ) {
+                        warn!("[BlockProducer] SAL announcement failed: {}", e);
+                    }
                 }
             }
         }
@@ -539,6 +598,104 @@ impl BlockProducer {
             "{}:{}:{}:{}",
             zt.sender, zt.receiver, zt.amount, zt.timestamp
         )
+    }
+
+    /// Generate an extended 68-column STARK proof that commits to `sig_commitment_root`.
+    ///
+    /// Proof format written to `block.zk_proof`:
+    ///   `EXTSTARK1` (9 bytes) | pub_inputs (232 bytes) | StarkProof bytes
+    ///
+    /// Both the proposer and every receiving validator verify this proof via
+    /// `Block::verify_zkp()`, which detects the `EXTSTARK1` magic prefix.
+    fn generate_extended_proof(
+        block: &Block,
+        validator_pk: &[u8],
+        validator_sk: &[u8],
+        sig_commitment_root: [u8; 32],
+        sig_hashes: &[[u8; 32]],
+    ) -> Result<(Vec<u8>, u64), String> {
+        use sha3::{Digest, Sha3_256};
+
+        let start = std::time::Instant::now();
+
+        // ── Derive public inputs ──────────────────────────────────────────
+        let mut block_hash_bytes = [0u8; 32];
+        let hash_hex = block.compute_hash();
+        hex::decode_to_slice(&hash_hex[..64], &mut block_hash_bytes)
+            .map_err(|e| format!("Extended proof: block hash decode: {}", e))?;
+
+        let merkle_root_hash: [u8; 32] = Sha3_256::digest(block.merkle_root.as_bytes()).into();
+        let validator_pk_hash: [u8; 32] = Sha3_256::digest(validator_pk).into();
+        let sk_seed_hash: [u8; 32] = {
+            let mut h = Sha3_256::new();
+            h.update(b"bleep_sk_seed_hash_v1");
+            h.update(&Sha3_256::digest(validator_sk)[..]);
+            h.finalize().into()
+        };
+        let smt_root: [u8; 32] = Sha3_256::digest(block.shard_state_root.as_bytes()).into();
+
+        // blocks_per_epoch: testnet=100, mainnet=1000. Derive from epoch_id/index
+        // or use the protocol constant. We use 100 for Phase-6 testnet.
+        let blocks_per_epoch: u64 = if block.epoch_id > 0 && block.index > 0 {
+            // Back-calculate from block index and epoch_id
+            block.index / block.epoch_id.max(1)
+        } else {
+            100 // Phase-6 testnet default
+        };
+
+        let pub_inputs = ExtendedBlockPublicInputs {
+            block_index:         block.index,
+            epoch_id:            block.epoch_id,
+            tx_count:            block.transactions.len() as u32,
+            blocks_per_epoch,
+            merkle_root_hash,
+            validator_pk_hash,
+            sk_seed_hash,
+            block_hash:          block_hash_bytes,
+            smt_root,
+            sig_commitment_root,
+            sig_count:           sig_hashes.len() as u32,
+            batch_seq_id:        block.index, // use block index as monotonic seq id
+        };
+
+        // ── Convert sig_hashes to raw_signatures for ParallelBatchSigProver ─
+        // The prover recomputes sig_commitment_root internally; we pass the
+        // sig_hashes as pre-computed values via a zero-copy shim so we don't
+        // re-hash 49,856-byte sigs a second time.
+        // ParallelBatchSigProver::prove_block expects raw signatures, but the
+        // heavy SHA3-256 hashing is already done. We pass fake 1-byte payloads
+        // whose pre-computed hashes match exactly, which the prover accepts because
+        // compute_commitment_parallel hashes them again -- instead we call
+        // prove_block_from_hashes which takes pre-computed hashes directly.
+        //
+        // Since prove_block_from_hashes is not on the public API yet, we build
+        // the trace directly and call prove() on the prover.
+        let prover = ParallelBatchSigProver::new(blocks_per_epoch, bleep_proof_options());
+
+        // Build the trace directly with pre-filled pub_inputs
+        // (sig_commitment_root already set from the earlier compute_sig_commitment call)
+        use winterfell::Prover;
+        let trace = prover.build_trace(&pub_inputs, sig_hashes);
+        let stark_proof = prover.prove(trace)
+            .map_err(|e| format!("Extended STARK prove failed: {:?}", e))?;
+
+        // ── Serialise: magic | pub_inputs (232 bytes) | proof bytes ──────
+        let proof_bytes = stark_proof.to_bytes();
+
+        let pi_encoded = Block::encode_ext_pub_inputs(&pub_inputs);
+
+        let mut out = Vec::with_capacity(
+            EXTENDED_STARK_MAGIC.len() + EXT_PUB_INPUTS_LEN + proof_bytes.len()
+        );
+        out.extend_from_slice(EXTENDED_STARK_MAGIC);
+        out.extend_from_slice(&pi_encoded);
+        out.extend_from_slice(&proof_bytes);
+
+        let elapsed_ms = start.elapsed().as_millis() as u64;
+        info!("[BlockProducer] Extended STARK proof generated in {} ms ({} bytes)",
+              elapsed_ms, out.len());
+
+        Ok((out, elapsed_ms))
     }
 
     fn generate_winterfell_proof(

@@ -18,7 +18,7 @@ use std::sync::{
 
 use crate::types::{
     BatchBlockAttestation, BlockId, BlockSigAvailabilityStatus,
-    SigCommitmentAnnouncement, SigCommitmentRoot, SigHash, TxBitmap,
+    SigCommitmentAnnouncement, SigHash, TxBitmap,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -74,9 +74,12 @@ struct MergedBitmapState {
 // Full-sig cache entry
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Cached full signature and signer key for later slashing evidence retrieval.
 #[derive(Clone)]
 pub struct FullSigCacheEntry {
+    /// The raw SPHINCS+ signature bytes for the referenced transaction.
     pub full_sig:     Vec<u8>,
+    /// The signer public key corresponding to `full_sig`.
     pub tx_signer_pk: Vec<u8>,
 }
 
@@ -326,21 +329,6 @@ impl SigAvailabilityStore {
     pub fn announcement_count(&self)      -> usize { self.inner.announcements.len() }
     pub fn batch_attestation_count(&self) -> usize { self.inner.batch_attestations.len() }
     pub fn cached_full_sig_count(&self)   -> usize { self.inner.full_sig_cache.len() }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// DashMap entry modifier helper (avoids double-lookup)
-// ─────────────────────────────────────────────────────────────────────────────
-
-trait AndModify<V> {
-    fn and_modify<F: FnOnce(&mut V)>(self, f: F) -> Self;
-}
-
-impl<V> AndModify<V> for dashmap::mapref::entry::OccupiedEntry<'_, BlockKey, Mutex<V>> {
-    fn and_modify<F: FnOnce(&mut V)>(self, f: F) -> Self {
-        { let mut guard = self.get().lock(); f(&mut *guard); }
-        self
-    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

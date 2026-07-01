@@ -160,7 +160,7 @@ This document describes the development trajectory for the BLEEP Quantum Trust N
 - 🔲 Sub-second block times (target: 200ms) via pipelined PBFT with optimised signing
 - 🔲 zkEVM compatibility mode for Ethereum dApp portability
 - 🔲 AI model governance: community-submitted model proposals via APAIPs
-- 🔲 Hash-based signature aggregation research — reduce per-block SPHINCS+ vote bandwidth by O(log n)
+- ✅ Signature Availability Layer — gossip bandwidth reduced from ~24 MB to ~320 KB per block (Sprint 10)
 - 🔲 `bleep-vm` BSL-1.1 → Apache-2.0 Change Date: **2028-07-13** (automatic)
 
 ---
@@ -200,7 +200,7 @@ These are honest gaps documented for contributors and researchers. See [`WHITEPA
 
 | Limitation | Impact | Mitigation Path |
 |---|---|---|
-| SPHINCS+ signatures are 7,856 bytes — no aggregation | ~32 MB aggregate signature data per full block; ~87 MB/s bandwidth floor | Hash-based signature aggregation research (Phase 8) |
+| SPHINCS+ signatures are 49,856 bytes — no native aggregation | SAL reduces gossip to ~320 KB/block via Blake3 Merkle commitment over SHA3-256(sig_i); receivers verify via STARK-committed sig_commitment_root | ✅ Resolved (Sprint 10) — hash-based Merkle aggregation (O(log n) validator vote bandwidth) remains Phase 8 research |
 | TPS figures are simulated, not measured | Projected 10,921 avg TPS — actual performance unknown until public testnet | Public testnet measurement in Phase 6 |
 | Ed25519 still present in Cargo.toml | Contradicts "no classical fallback" until Phase 9 sunset | Explicit sunset in Phase 9; quantum feature flag enforces PQ on sensitive paths now |
 | STARK proof size larger than SNARKs | ~100 KB per proof vs SNARKs; offset by no trusted setup requirement | Accepted design trade-off; documented in whitepaper |

@@ -256,3 +256,60 @@ Each module is versioned and replaceable:
 BLEEP’s architecture is self-amending — meaning protocol upgrades can be proposed, validated, and adopted without forks. This ensures that BLEEP remains future-proof as technology, regulation, and infrastructure evolve.
 
 Join us in building a chain that adapts, protects, and survives the future.
+
+## Signature Availability Layer (SAL)
+
+**Status:** Live — Protocol Version 5, Sprint 10
+
+The SAL solves the SPHINCS+ block-propagation bandwidth problem without sacrificing post-quantum security.
+
+### Problem
+
+SPHINCS+-SHAKE-256f-simple produces 49,856-byte signatures. At 512 tx/block, raw signature data per block is ~24.3 MB. Broadcasting this with every block is impractical for validators on commodity internet connections.
+
+### Solution
+
+```
+Producer node                          Peer validators
+─────────────────────────────────────────────────────────
+For each tx.signature:
+  SHA3-256(sig_i)  →  sig_hash_i       (rayon-parallel)
+
+Blake3 Merkle tree over {sig_hash_i}
+  →  sig_commitment_root [u8; 32]
+
+block.sig_commitment_root = root        ← stamped BEFORE signing
+block.sign_block_with_pk()             ← SPHINCS+ sig covers root
+generate_extended_proof()              ← STARK proof commits to root
+
+Gossip: to_gossip()                    →  ~320 KB (zero sig bytes)
+SAL: broadcast_block_announcement()    →  sig_commitment_root + sig_hashes
+
+                                            receive CompactBlock
+                                            verify SPHINCS+ sig (covers root)
+                                            verify STARK proof (covers root)
+                                            verify_sig_commitment_root():
+                                              sigs empty → trust STARK ✓
+```
+
+### Data Structures
+
+| Type | Description | Size |
+|------|-------------|------|
+| `Block::sig_commitment_root` | Blake3 Merkle root over SHA3-256(sig_i) | 32 bytes |
+| `BatchBlockAttestation` | One SPHINCS+-signed attestation per validator per block | ~320 bytes |
+| `CompactTransaction` | tx data without SPHINCS+ signature | ~100 bytes |
+| Gossip block payload | `to_gossip()` — zero signature bytes | ~320 KB (512 tx) |
+| Extended STARK proof | `EXTSTARK1` + 232-byte pub_inputs + proof | ~100 KB |
+
+### Proof Format
+
+```
+block.zk_proof (non-empty blocks):
+  [9 bytes]    b"EXTSTARK1"
+  [232 bytes]  ExtendedBlockPublicInputs (fixed-width LE)
+  [remainder]  Winterfell StarkProof bytes
+```
+
+`Block::verify_zkp()` dispatches on the `EXTSTARK1` prefix. Legacy `STARK_V1` and Fiat-Shamir proofs are still accepted for backward compatibility.
+

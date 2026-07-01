@@ -20,7 +20,7 @@ The audit target consists of the following crates:
 | `bleep-pat` | **Medium** | Token creation, burn/transfer logic |
 | `bleep-rpc` | **Medium** | Public surface, rate limiting, faucet |
 | `bleep-p2p` | **Medium** | Peer discovery, gossip amplification |
-| `bleep-zkp` | **Medium** | Groth16 verifier correctness |
+| `bleep-zkp` | **Medium** | Extended BlockValidityAir constraint coverage; STARK proof format integrity |
 
 ---
 
@@ -64,7 +64,7 @@ The audit target consists of the following crates:
 |---|---|---|---|---|
 | C-01 | SPHINCS+ key compromise via side-channel | bleep-crypto | Zeroize on drop; constant-time compare | Timing attacks under microbenchmark pressure |
 | C-02 | Kyber1024 decapsulation oracle | bleep-crypto | Reject partial ciphertexts; no timing branches | Kyber is not CCA-secure without wrapper |
-| C-03 | Groth16 trusted setup backdoor | bleep-zkp | Devnet-only SRS; MPC ceremony planned Sprint 9 | **Known gap** — Sprint 9 mitigates |
+| C-03 | STARK constraint coverage | bleep-zkp | Winterfell STARKs require no trusted setup; transition constraints on ExtendedBlockValidityAir are partially implemented — full block-validity semantics pending Phase 6 | **Open** — Phase 6 priority |
 | C-04 | SHA3-256 collision in state root | bleep-state | Standard cryptographic assumption | Theoretical only |
 | C-05 | JWT HS256 secret brute force | bleep-auth | Enforce ≥256-bit secret; rotation endpoint | Weak secrets in misconfigured deployments |
 
@@ -105,6 +105,8 @@ The audit target consists of the following crates:
 | P2P-01 | Eclipse attack (all peers attacker-controlled) | bleep-p2p | DNS seeds; peer rotation; diverse connection | Bootstrap diversity depends on seed operators |
 | P2P-02 | Gossip amplification (DDoS) | bleep-p2p | Message deduplication; fanout cap 8 | Large-blob transactions could amplify |
 | P2P-03 | Bandwidth exhaustion via large blocks | bleep-p2p | Max 4,096 tx/block; ~1.5 MB max block | Not rate-limited per-peer yet |
+
+| N-SAL | SAL announcement withholding — validator refuses to gossip `BatchBlockAttestation`, denying peers access to sig_hashes | bleep-p2p, bleep-sig-availability | BFT threshold requires >2/3 of stake to attest; withholding by f < n/3 validators does not prevent block finalisation | **Accepted** — standard BFT assumption |
 
 ### 3.6 Auth / API Threats
 
@@ -159,16 +161,29 @@ The audit target consists of the following crates:
 
 ---
 
-## 5. Known Gaps (Sprint 9 Targets)
+## 5. Known Gaps — Current Status (Sprint 10)
 
-| Gap | Severity | Sprint 9 Mitigation |
+**Resolved (Sprint 10):**
+
+| Gap | Resolution |
+|---|---|
+| sig_commitment_root not in Block struct | ✅ Added to Block + BlockHeader with `#[serde(default)]`; bound into SPHINCS+ sig and STARK proof |
+| Block validation did not check SAL root | ✅ `BlockValidator::verify_sig_commitment_root()` added; recomputes and compares for full-sig blocks |
+| Block gossip propagated full 49,856-byte SPHINCS+ signatures | ✅ `to_gossip()` strips signatures; ~24 MB → ~320 KB per block at 512 tx/block |
+| ExtendedBlockValidityAir not used in production | ✅ `generate_extended_proof()` in `BlockProducer`; `EXTSTARK1` format; `verify_extended_stark_zkp()` in `Block` |
+| No trusted setup in STARK system | ✅ Winterfell FRI-based; no SRS, no MPC ceremony required (C-03 was a stale Groth16 reference — no Groth16 in codebase) |
+
+**Open (Phase 6):**
+
+| Gap | Severity | Mitigation |
 |---|---|---|
-| Groth16 SRS locally generated (no MPC) | High | Public MPC ceremony |
-| BleepFulfill.sol not audited | High | Independent Solidity audit |
+| STARK constraint coverage — `ExtendedBlockValidityAir` transition constraints do not yet enforce block-hash preimage, validator key-pair binding, epoch consistency | High | Phase 6 priority — extends `get_periodic_column_values()` and `evaluate_transition()` in `extended_air.rs` |
+| BleepFulfill.sol not deployed to Sepolia with verifiable address | High | Deploy to Sepolia; publish Etherscan address |
 | Audit log is in-memory (cleared on restart) | Medium | WAL persistence + on-chain anchoring |
 | No per-IP global rate cap in RPC | Medium | nginx / caddy reverse proxy layer |
 | `bleep-p2p` eclipse attack via crafted peer list | Medium | Peer diversity enforcement, Kademlia |
 | Long-range reorg protection (checkpoint service) | Medium | Light client checkpoint anchoring |
+| `MAX_TXS_PER_BLOCK` not yet set to 512 for Phase 6 testnet | Low | Configuration change before public validator onboarding |
 
 ---
 
